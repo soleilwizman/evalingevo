@@ -72,9 +72,11 @@ biological conclusions.
   paired RMSE improvements. Predictions remain fixed, so intervals are
   conditional on the selected folds and measured effects.
 - Baselines: zero interaction, training-fold mean/median, majority sign, an
-  exactly additive GC-count negative control, and fixed-alpha ridge regression
-  using measured single effects plus distance. The ridge has more experimental
-  information than zero-shot Evo and is labeled accordingly.
+  exactly additive GC-count negative control, and a fixed-alpha supervised ridge
+  using only sequence k-mer counts and variant coordinates. The sequence-only
+  ridge is fit inside the grouped folds; it uses training epsilon labels but no
+  measured single- or double-mutant activity values, so it has no algebraic
+  overlap with the target construction.
 - Outputs: `predictions.csv`, `results_table.csv`, `metrics.json`, `cases.csv`, and one six-panel
   `plots.png` covering raw/calibrated scatterplots, both distributions, distance,
   and interaction magnitude.

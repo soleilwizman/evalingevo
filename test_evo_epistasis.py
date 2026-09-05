@@ -8,7 +8,7 @@ import pandas as pd
 
 from evo_epistasis import (add_predictions, differences, load_quartets, metrics,
                             rank_feature_contrasts, reconstruct,
-                            reverse_complement, seq_id)
+                            reverse_complement, seq_id, sequence_only_features)
 
 
 def fixture(n=15):
@@ -43,6 +43,11 @@ class MVPTests(unittest.TestCase):
         out, _ = add_predictions(q, scores)
         np.testing.assert_allclose(out.model_interaction, 0)
         self.assertTrue((out.groupby("group_id").fold.nunique() == 1).all())
+        self.assertIn("sequence_only_kmer_ridge", out)
+        self.assertEqual(sequence_only_features(q).shape, (len(q), 4 * 84 + 3))
+        altered = q.copy()
+        altered[["y_wt", "y_a", "y_b", "y_ab", "epsilon"]] += 7.0
+        np.testing.assert_allclose(sequence_only_features(q), sequence_only_features(altered))
         self.assertIsNone(metrics([1, 2, 3], [0, 0, 0])["spearman"])
 
     def test_reverse_complement_and_sae_sign(self):

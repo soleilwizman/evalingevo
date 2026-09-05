@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import importlib.metadata
+import itertools
 import json
 import platform
 import re
@@ -24,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 STATES = ("wt", "a", "b", "ab")
 SOURCE = "https://zenodo.org/records/15297965"
 CONTRAST = "A+B-WT-AB (expected additive minus observed double)"
+KMER_VOCAB = tuple("".join(chars) for k in (1, 2, 3) for chars in itertools.product("ACGT", repeat=k))
 
 
 def file_hash(path):
@@ -313,6 +315,22 @@ def metrics(y, pred, threshold=0.25, errors=False):
     return result
 
 
+def sequence_only_features(quartets):
+    """Build sequence/design features without using measured activity values."""
+    features = np.zeros((len(quartets), len(STATES) * len(KMER_VOCAB) + 3), float)
+    for row_index, row in enumerate(quartets.itertuples(index=False)):
+        offset = 0
+        for state in STATES:
+            sequence = getattr(row, f"seq_{state}")
+            for kmer_index, kmer in enumerate(KMER_VOCAB):
+                features[row_index, offset + kmer_index] = sum(
+                    sequence[i:i + len(kmer)] == kmer for i in range(len(sequence) - len(kmer) + 1)
+                )
+            offset += len(KMER_VOCAB)
+        features[row_index, -3:] = (row.pos_a, row.pos_b, row.distance)
+    return features
+
+
 def add_predictions(quartets, scores, folds=5, seed=0):
     if scores.sequence_id.duplicated().any():
         raise ValueError("Duplicate sequence scores")
@@ -324,10 +342,10 @@ def add_predictions(quartets, scores, folds=5, seed=0):
     df["model_interaction"] = df.s_a + df.s_b - df.s_wt - df.s_ab
     if not 2 <= folds <= df.group_id.nunique():
         raise ValueError("Invalid grouped-fold count")
-    a, b, y = df.y_a - df.y_wt, df.y_b - df.y_wt, df.epsilon.to_numpy()
-    features = np.c_[a + b, a * b, a * a + b * b, np.log1p(df.distance)]
+    y = df.epsilon.to_numpy()
+    features = sequence_only_features(df)
     df["additive_zero"], df["fold"] = 0.0, -1
-    names = ("calibrated_model", "training_mean", "training_median", "single_effects_ridge", "majority_sign")
+    names = ("calibrated_model", "training_mean", "training_median", "sequence_only_kmer_ridge", "majority_sign")
     for name in names:
         df[name] = np.nan
     coefficients = []
@@ -336,7 +354,7 @@ def add_predictions(quartets, scores, folds=5, seed=0):
         model = LinearRegression().fit(df.model_interaction.to_numpy()[train, None], y[train])
         ridge = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(features[train], y[train])
         df.loc[df.index[test], "calibrated_model"] = model.predict(df.model_interaction.to_numpy()[test, None])
-        df.loc[df.index[test], "single_effects_ridge"] = ridge.predict(features[test])
+        df.loc[df.index[test], "sequence_only_kmer_ridge"] = ridge.predict(features[test])
         df.loc[df.index[test], "training_mean"] = y[train].mean()
         df.loc[df.index[test], "training_median"] = np.median(y[train])
         df.loc[df.index[test], "majority_sign"] = 1.0 if np.sum(y[train] > 0) >= np.sum(y[train] < 0) else -1.0
@@ -348,7 +366,7 @@ def add_predictions(quartets, scores, folds=5, seed=0):
 def cluster_intervals(df, n_boot=1000, seed=0):
     rng = np.random.default_rng(seed)
     groups = [np.flatnonzero(df.group_id.to_numpy() == g) for g in df.group_id.unique()]
-    samples = {k: [] for k in ("spearman", "pearson", "rmse_gain_zero", "rmse_gain_mean", "rmse_gain_ridge")}
+    samples = {k: [] for k in ("spearman", "pearson", "rmse_gain_zero", "rmse_gain_mean", "rmse_gain_sequence")}
     y, raw, calibrated = (df[c].to_numpy() for c in ("epsilon", "model_interaction", "calibrated_model"))
     for _ in range(n_boot):
         idx = np.concatenate([groups[i] for i in rng.integers(len(groups), size=len(groups))])
@@ -357,7 +375,7 @@ def cluster_intervals(df, n_boot=1000, seed=0):
                 samples[key].append(value)
         model_rmse = np.sqrt(np.mean((y[idx] - calibrated[idx]) ** 2))
         for key, column in (("rmse_gain_zero", "additive_zero"), ("rmse_gain_mean", "training_mean"),
-                            ("rmse_gain_ridge", "single_effects_ridge")):
+                            ("rmse_gain_sequence", "sequence_only_kmer_ridge")):
             samples[key].append(float(np.sqrt(np.mean((y[idx] - df[column].to_numpy()[idx]) ** 2)) - model_rmse))
     return {k: np.quantile(v, [0.025, 0.975]).tolist() if v else None for k, v in samples.items()}
 
@@ -417,7 +435,7 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
     strata = make_plot(df, out / "plots.png", label)
     y = df.epsilon.to_numpy()
     prediction_metrics = {x: metrics(y, df[x], threshold, True) for x in
-                          ("calibrated_model", "additive_zero", "training_mean", "training_median", "single_effects_ridge")}
+                          ("calibrated_model", "additive_zero", "training_mean", "training_median", "sequence_only_kmer_ridge")}
     table = pd.DataFrame([{"method": "raw " + label, **metrics(y, df.model_interaction, threshold)},
                           *[{"method": name, **values} for name, values in prediction_metrics.items()]])
     table.to_csv(out / "results_table.csv", index=False)
