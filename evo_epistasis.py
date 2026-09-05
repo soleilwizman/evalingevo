@@ -499,7 +499,9 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
             scale = np.sqrt(reliability)
             ci = result["cluster_bootstrap_95ci"]
             result["noise_ceiling"].update({
+                "spearman_reliability_adjusted_95ci_approx": [float(np.clip(value / scale, -1.0, 1.0)) for value in ci["spearman"]],
                 "spearman_upper_95_reliability_adjusted_approx": float(np.clip(ci["spearman"][1] / scale, -1.0, 1.0)),
+                "pearson_reliability_adjusted_95ci": [float(np.clip(value / scale, -1.0, 1.0)) for value in ci["pearson"]],
                 "pearson_upper_95_reliability_adjusted": float(np.clip(ci["pearson"][1] / scale, -1.0, 1.0)),
                 "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation.",
             })

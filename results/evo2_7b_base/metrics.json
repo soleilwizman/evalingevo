@@ -224,7 +224,15 @@
     "distinguishable_fraction_abs_epsilon_ge_z_se": 0.09036357218496294,
     "significance_z": 1.96,
     "assumption": "classical independent measurement error; diagnostic estimate",
+    "spearman_reliability_adjusted_95ci_approx": [
+      -0.03931832909202501,
+      0.09959373914439876
+    ],
     "spearman_upper_95_reliability_adjusted_approx": 0.09959373914439876,
+    "pearson_reliability_adjusted_95ci": [
+      -0.0718989395236697,
+      0.0774819410296502
+    ],
     "pearson_upper_95_reliability_adjusted": 0.0774819410296502,
     "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation."
   },
