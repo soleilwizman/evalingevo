@@ -1,0 +1,20 @@
+{
+  "source": "https://zenodo.org/records/15297965",
+  "source_rows": 82876,
+  "cell": "K562",
+  "window": "middle",
+  "center_variant": "var1",
+  "contrast": "A+B-WT-AB (expected additive minus observed double)",
+  "source_int_log2Skew_relation": "epsilon = -int_log2Skew",
+  "library_rule": "lexicographic_first_before_QC",
+  "candidate_pairs": 3304,
+  "duplicate_libraries_not_selected": 130,
+  "accepted_pairs": 2833,
+  "excluded_pairs": 471,
+  "overlap_groups": 2251,
+  "min_mean_DNA": 20,
+  "max_activity_SE_log2": 0.5,
+  "all_windows_sha256": "1e32597d55763e1ce450742d5cd221ec43c6ea1e174dd590624f5a23664fa93c",
+  "code_zip_sha256": "0232a4ab60d0fec6eb3f1f3ed1ba0cbe08920fca821647beafc2c0b665b9b87e",
+  "original_haplotype_design_independently_verified": false
+}

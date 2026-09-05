@@ -1,0 +1,20 @@
+{
+  "backend": "evo",
+  "checkpoint": "evo2_7b_base",
+  "revision": "074097e9dc788e8bfe045d6495b9f6153a7c6bfc",
+  "contrast": "A+B-WT-AB (expected additive minus observed double)",
+  "score": "mean(forward,RC) of summed AR log-likelihood; EOD-as-BOS; FP32 log-softmax; FP64 sum",
+  "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
+  "code_sha256": "a8fd79bee317cb04d7d0cbe9d1de0227e6a6b1ea4210eba7a22f33f9aa86369c",
+  "weights_sha256": null,
+  "batch_size": 1,
+  "python": "3.12.3",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "packages": {
+    "numpy": "2.3.5",
+    "pandas": "2.2.3",
+    "scipy": "1.17.0",
+    "scikit-learn": "1.8.0",
+    "matplotlib": "3.10.8"
+  }
+}

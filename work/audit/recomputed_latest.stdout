@@ -1,0 +1,224 @@
+{
+  "label": "Evo 2 7B base",
+  "contrast": "A+B-WT-AB (expected additive minus observed double)",
+  "pairs": 2833,
+  "groups": 2251,
+  "raw": {
+    "n": 2833,
+    "spearman": 0.01760621935570395,
+    "pearson": 0.001065144800278509,
+    "n_sign": 1020,
+    "sign_accuracy": 0.5245098039215687,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5246826081597435
+  },
+  "raw_all_nonzero_signs": {
+    "n": 2833,
+    "spearman": 0.01760621935570395,
+    "pearson": 0.001065144800278509,
+    "n_sign": 2833,
+    "sign_accuracy": 0.5037063183903989,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5041687403567179
+  },
+  "predictions": {
+    "calibrated_model": {
+      "n": 2833,
+      "spearman": -0.05074862496109783,
+      "pearson": -0.07113879030351564,
+      "n_sign": 1020,
+      "sign_accuracy": 0.47941176470588237,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.4723822876864292,
+      "rmse": 0.3542746049434331,
+      "mae": 0.24899975281116538
+    },
+    "additive_zero": {
+      "n": 2833,
+      "spearman": null,
+      "pearson": null,
+      "n_sign": 1020,
+      "sign_accuracy": 0.0,
+      "sign_coverage": 0.0,
+      "balanced_sign_accuracy": 0.0,
+      "rmse": 0.3537617081680275,
+      "mae": 0.24849778276753393
+    },
+    "training_mean": {
+      "n": 2833,
+      "spearman": -0.04055478063133629,
+      "pearson": -0.03922887021126817,
+      "n_sign": 1020,
+      "sign_accuracy": 0.49901960784313726,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.48626432885492415,
+      "rmse": 0.3539094095993812,
+      "mae": 0.24866342245677675
+    },
+    "training_median": {
+      "n": 2833,
+      "spearman": -0.038235639389464275,
+      "pearson": -0.03146558077446153,
+      "n_sign": 1020,
+      "sign_accuracy": 0.47843137254901963,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.5,
+      "rmse": 0.35390964391002555,
+      "mae": 0.24853637060883252
+    },
+    "single_effects_ridge": {
+      "n": 2833,
+      "spearman": 0.57038588183351,
+      "pearson": 0.521855401509362,
+      "n_sign": 1020,
+      "sign_accuracy": 0.8539215686274509,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.8531831628250955,
+      "rmse": 0.3018415194838815,
+      "mae": 0.21432545344468537
+    }
+  },
+  "majority_sign": {
+    "n": 2833,
+    "spearman": null,
+    "pearson": null,
+    "n_sign": 1020,
+    "sign_accuracy": 0.47843137254901963,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5
+  },
+  "calibration": [
+    {
+      "fold": 0,
+      "intercept": -0.00493050024096451,
+      "slope": -0.006134958963669686
+    },
+    {
+      "fold": 1,
+      "intercept": -0.0048228679039044155,
+      "slope": 0.002365219785823556
+    },
+    {
+      "fold": 2,
+      "intercept": -0.003925078875154848,
+      "slope": -0.0026748194872972604
+    },
+    {
+      "fold": 3,
+      "intercept": 0.003922727669208558,
+      "slope": -0.0036717851423681783
+    },
+    {
+      "fold": 4,
+      "intercept": 0.0006327322389498233,
+      "slope": 0.012488280283453595
+    }
+  ],
+  "cluster_bootstrap_95ci": {
+    "spearman": [
+      -0.02102281511967166,
+      0.05325101074893282
+    ],
+    "pearson": [
+      -0.03844309124553172,
+      0.04142822340103023
+    ],
+    "rmse_gain_zero": [
+      -0.0008252841441569361,
+      -0.00023668522742987952
+    ],
+    "rmse_gain_mean": [
+      -0.0006556421198489884,
+      -0.00012870086620220129
+    ],
+    "rmse_gain_ridge": [
+      -0.06356777191492749,
+      -0.04032827619863264
+    ]
+  },
+  "strata": [
+    {
+      "stratification": "distance",
+      "bin": "(0.0, 10.0]",
+      "n": 445,
+      "mae": 0.2602185451134982,
+      "spearman": 0.08862092303418449,
+      "pearson": -0.0032399837053273435
+    },
+    {
+      "stratification": "distance",
+      "bin": "(10.0, 25.0]",
+      "n": 490,
+      "mae": 0.25293775607775865,
+      "spearman": 0.03699162870825989,
+      "pearson": -0.01001666922772695
+    },
+    {
+      "stratification": "distance",
+      "bin": "(25.0, 50.0]",
+      "n": 759,
+      "mae": 0.23183057786305966,
+      "spearman": -0.011286777802599882,
+      "pearson": -0.024702008609503466
+    },
+    {
+      "stratification": "distance",
+      "bin": "(50.0, 100.0]",
+      "n": 1139,
+      "mae": 0.2543635979476391,
+      "spearman": -0.007306576261342116,
+      "pearson": 0.03503278220405116
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(-0.001, 0.25]",
+      "n": 1813,
+      "mae": 0.11495604468460643,
+      "spearman": -0.00126540737775338,
+      "pearson": 0.014569545440077172
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(0.25, 0.5]",
+      "n": 698,
+      "mae": 0.35019714048464806,
+      "spearman": -0.006952386368109405,
+      "pearson": 0.007028768740891392
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(0.5, 1.0]",
+      "n": 265,
+      "mae": 0.6698740002869413,
+      "spearman": 0.02403564657785115,
+      "pearson": 0.017965431179710063
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(1.0, inf]",
+      "n": 57,
+      "mae": 1.3166101152020397,
+      "spearman": -0.0008426238008815142,
+      "pearson": -0.15217021146006854
+    }
+  ],
+  "settings": {
+    "folds": 5,
+    "seed": 0,
+    "bootstrap": 1000,
+    "sign_threshold": 0.25
+  },
+  "inputs": {
+    "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
+    "scores_sha256": "c8fbf58203e893404fd2f7d41aa7112ed19e37b0dfff497177c17809b842ba85"
+  },
+  "exploratory_source_SE_subset": {
+    "n": 256,
+    "spearman": 0.05852311741817349,
+    "pearson": -0.007413189131633573,
+    "n_sign": 251,
+    "sign_accuracy": 0.5298804780876494,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5252237851662405
+  }
+}
