@@ -75,7 +75,7 @@ biological conclusions.
   exactly additive GC-count negative control, and fixed-alpha ridge regression
   using measured single effects plus distance. The ridge has more experimental
   information than zero-shot Evo and is labeled accordingly.
-- Outputs: `predictions.csv`, `metrics.json`, `cases.csv`, and one six-panel
+- Outputs: `predictions.csv`, `results_table.csv`, `metrics.json`, `cases.csv`, and one six-panel
   `plots.png` covering raw/calibrated scatterplots, both distributions, distance,
   and interaction magnitude.
 
@@ -108,7 +108,7 @@ evo-epi evaluate \
 Its interaction must be zero for every pair; correlations are correctly
 reported as `null` because a constant cannot be correlated.
 
-## Run Evo on an Arc GPU
+## Run Evo on a GPU pod (RunPod or Arc)
 
 Use a supported Linux/CUDA environment and pin the actual model snapshot. Start
 at batch size 1 and test repeatability and batch-size consistency on 20 quartets.

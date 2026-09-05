@@ -101,6 +101,10 @@ def parse_variant(value):
 
 def read_oligos(code_zip, wanted):
     found = {}
+    def add(key, value):
+        if key in found and found[key] != value:
+            raise ValueError(f"Conflicting FASTA records for {key}")
+        found[key] = value
     with zipfile.ZipFile(code_zip) as archive:
         for name in archive.namelist():
             if "/dockerfiles/mpra_chr" not in name or not name.endswith(".fasta"):
@@ -111,12 +115,12 @@ def read_oligos(code_zip, wanted):
                     line = raw.decode().strip()
                     if line.startswith(">"):
                         if key in wanted:
-                            found[key] = "".join(parts)
+                            add(key, "".join(parts))
                         key, parts = line[1:].split()[0], []
                     elif key in wanted:
                         parts.append(line)
                 if key in wanted:
-                    found[key] = "".join(parts)
+                    add(key, "".join(parts))
     return found
 
 
@@ -412,11 +416,15 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
     select_cases(df, threshold=threshold).to_csv(out / "cases.csv", index=False)
     strata = make_plot(df, out / "plots.png", label)
     y = df.epsilon.to_numpy()
+    prediction_metrics = {x: metrics(y, df[x], threshold, True) for x in
+                          ("calibrated_model", "additive_zero", "training_mean", "training_median", "single_effects_ridge")}
+    table = pd.DataFrame([{"method": "raw " + label, **metrics(y, df.model_interaction, threshold)},
+                          *[{"method": name, **values} for name, values in prediction_metrics.items()]])
+    table.to_csv(out / "results_table.csv", index=False)
     result = {"label": label, "contrast": CONTRAST, "pairs": len(df), "groups": int(df.group_id.nunique()),
               "raw": metrics(y, df.model_interaction, threshold),
               "raw_all_nonzero_signs": metrics(y, df.model_interaction, 0),
-              "predictions": {x: metrics(y, df[x], threshold, True) for x in
-                              ("calibrated_model", "additive_zero", "training_mean", "training_median", "single_effects_ridge")},
+              "predictions": prediction_metrics,
               "majority_sign": metrics(y, df.majority_sign, threshold), "calibration": coefficients,
               "cluster_bootstrap_95ci": cluster_intervals(df, n_boot, seed), "strata": strata,
               "settings": {"folds": folds, "seed": seed, "bootstrap": n_boot, "sign_threshold": threshold},
