@@ -212,6 +212,22 @@
     "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
     "scores_sha256": "c8fbf58203e893404fd2f7d41aa7112ed19e37b0dfff497177c17809b842ba85"
   },
+  "noise_ceiling": {
+    "n": 2833,
+    "epsilon_variance_population": 0.12514382771075644,
+    "mean_epsilon_se_squared": 0.08936706259774096,
+    "estimated_signal_variance": 0.035776765113015474,
+    "reliability_raw": 0.2858851752217929,
+    "reliability": 0.2858851752217929,
+    "perfect_predictor_observed_correlation_ceiling": 0.5346823124265407,
+    "distinguishable_n_abs_epsilon_ge_z_se": 256,
+    "distinguishable_fraction_abs_epsilon_ge_z_se": 0.09036357218496294,
+    "significance_z": 1.96,
+    "assumption": "classical independent measurement error; diagnostic estimate",
+    "spearman_upper_95_reliability_adjusted_approx": 0.09959373914439876,
+    "pearson_upper_95_reliability_adjusted": 0.0774819410296502,
+    "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation."
+  },
   "exploratory_source_SE_subset": {
     "n": 256,
     "spearman": 0.05852311741817349,

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from evo_epistasis import (add_predictions, differences, load_quartets, metrics,
-                            rank_feature_contrasts, reconstruct,
+                            noise_ceiling, rank_feature_contrasts, reconstruct,
                             reverse_complement, seq_id, sequence_only_features)
 
 
@@ -56,6 +56,16 @@ class MVPTests(unittest.TestCase):
         ranked = rank_feature_contrasts(x, top_k=1)
         self.assertEqual(int(ranked.feature.iloc[0]), 1)
         self.assertAlmostEqual(ranked.contrast.iloc[0], -10)
+
+    def test_noise_ceiling(self):
+        summary = noise_ceiling(np.array([-2.0, 0.0, 2.0, 4.0]),
+                                np.array([0.1, 0.2, 0.3, 0.4]))
+        self.assertEqual(summary["n"], 4)
+        self.assertAlmostEqual(summary["epsilon_variance_population"], 5.0)
+        self.assertAlmostEqual(summary["mean_epsilon_se_squared"], 0.075)
+        self.assertAlmostEqual(summary["reliability"], 0.985)
+        self.assertAlmostEqual(summary["perfect_predictor_observed_correlation_ceiling"], np.sqrt(0.985))
+        self.assertEqual(summary["distinguishable_n_abs_epsilon_ge_z_se"], 3)
 
     def test_source_oligo_reconstruction(self):
         genome = list("A" * 210); genome[109] = "G"; genome = "".join(genome)

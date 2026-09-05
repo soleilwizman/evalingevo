@@ -71,6 +71,21 @@ biological conclusions.
 - Uncertainty: 1,000 overlapping-region cluster bootstraps for correlations and
   paired RMSE improvements. Predictions remain fixed, so intervals are
   conditional on the selected folds and measured effects.
+- Measurement noise: when `epsilon_se` is available, `metrics.json` reports a
+  classical reliability diagnostic
+  `R = 1 - mean(epsilon_se^2) / Var(epsilon)`. Its `sqrt(R)` value is the
+  estimated maximum observed correlation for a perfect predictor. The report
+  also counts interactions distinguishable from zero at `|epsilon| >= 1.96 SE`
+  and gives an approximate reliability-adjusted upper correlation limit from
+  the bootstrap interval. These quantities assume independent classical
+  measurement error; they are a noise diagnostic, not a proof that all
+  residual variation is measurement noise.
+- In the tracked 2,833-pair run, `Var(epsilon)=0.12514` and mean
+  `epsilon_se^2=0.08937`, giving `R=0.28589` and a perfect-predictor observed
+  correlation ceiling of `sqrt(R)=0.53468`. Only 256/2,833 pairs (9.04%) meet
+  `|epsilon| >= 1.96 SE`. The raw Spearman cluster-bootstrap upper limit is
+  `0.05325`; dividing by `sqrt(R)` gives an approximate reliability-adjusted
+  95% upper limit of `0.09959` (Spearman correction is heuristic).
 - Baselines: zero interaction, training-fold mean/median, majority sign, an
   exactly additive GC-count negative control, and a fixed-alpha supervised ridge
   using only sequence k-mer counts and variant coordinates. The sequence-only
@@ -187,7 +202,7 @@ quartets with complete provenance, cached Evo scores, grouped evaluation,
 baselines, intervals, plots, and retained null results. Evidence supporting
 further work is a positive raw Spearman interval excluding zero plus lower
 out-of-fold RMSE than zero and training-mean baselines; improvement over the
-single-effects ridge and balanced sign accuracy above chance are stronger tests.
+sequence-only ridge and balanced sign accuracy above chance are stronger tests.
 A reproducible null result still completes the MVP and would show that direct
 sequence likelihood is not sufficient for this assay—not that Evo contains no
 interaction-relevant representation.

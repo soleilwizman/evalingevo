@@ -80,6 +80,10 @@ def load_quartets(path):
     numeric = [f"y_{s}" for s in STATES] + ["epsilon", "distance", "pos_a", "pos_b"]
     if not np.isfinite(df[numeric].to_numpy(float)).all():
         raise ValueError("Nonfinite measurement or coordinate")
+    if "epsilon_se" in df:
+        df["epsilon_se"] = pd.to_numeric(df["epsilon_se"], errors="raise")
+        if not np.isfinite(df.epsilon_se.to_numpy(float)).all() or (df.epsilon_se < 0).any():
+            raise ValueError("epsilon_se must be finite and nonnegative")
     expected = df.y_a + df.y_b - df.y_wt - df.y_ab
     if not np.allclose(df.epsilon, expected, atol=1e-8, rtol=1e-8):
         raise ValueError(f"epsilon must use {CONTRAST}")
@@ -315,6 +319,46 @@ def metrics(y, pred, threshold=0.25, errors=False):
     return result
 
 
+def noise_ceiling(y, epsilon_se, significance_z=1.96):
+    """Estimate target reliability and the corresponding observed-r ceiling.
+
+    This is the classical independent-error approximation
+    ``R = 1 - mean(epsilon_se**2) / Var(epsilon)``.  The square-root of R is
+    the expected maximum observed correlation for a perfect predictor.  The
+    estimate is a diagnostic: it assumes the reported standard errors capture
+    independent measurement error and that the across-pair variance is the
+    signal variance plus that error variance.
+    """
+    y, epsilon_se = np.asarray(y, dtype=float), np.asarray(epsilon_se, dtype=float)
+    if y.shape != epsilon_se.shape:
+        raise ValueError("y and epsilon_se must have the same shape")
+    mask = np.isfinite(y) & np.isfinite(epsilon_se) & (epsilon_se >= 0)
+    if mask.sum() < 2:
+        raise ValueError("Need at least two finite observations with nonnegative epsilon_se")
+    y, epsilon_se = y[mask], epsilon_se[mask]
+    epsilon_variance = float(np.var(y, ddof=0))
+    mean_se_squared = float(np.mean(epsilon_se ** 2))
+    if epsilon_variance <= 0:
+        reliability_raw = None
+        reliability = 0.0
+    else:
+        reliability_raw = float(1.0 - mean_se_squared / epsilon_variance)
+        reliability = float(np.clip(reliability_raw, 0.0, 1.0))
+    return {
+        "n": int(mask.sum()),
+        "epsilon_variance_population": epsilon_variance,
+        "mean_epsilon_se_squared": mean_se_squared,
+        "estimated_signal_variance": float(max(epsilon_variance - mean_se_squared, 0.0)),
+        "reliability_raw": reliability_raw,
+        "reliability": reliability,
+        "perfect_predictor_observed_correlation_ceiling": float(np.sqrt(reliability)),
+        "distinguishable_n_abs_epsilon_ge_z_se": int(np.sum(np.abs(y) >= significance_z * epsilon_se)),
+        "distinguishable_fraction_abs_epsilon_ge_z_se": float(np.mean(np.abs(y) >= significance_z * epsilon_se)),
+        "significance_z": float(significance_z),
+        "assumption": "classical independent measurement error; diagnostic estimate",
+    }
+
+
 def sequence_only_features(quartets):
     """Build sequence/design features without using measured activity values."""
     features = np.zeros((len(quartets), len(STATES) * len(KMER_VOCAB) + 3), float)
@@ -449,6 +493,16 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
               "inputs": {"quartets_sha256": file_hash(quartets_path), "scores_sha256": file_hash(scores_path)}}
     if "epsilon_se" in df:
         se = pd.to_numeric(df.epsilon_se, errors="coerce")
+        result["noise_ceiling"] = noise_ceiling(y, se)
+        reliability = result["noise_ceiling"]["reliability"]
+        if reliability > 0:
+            scale = np.sqrt(reliability)
+            ci = result["cluster_bootstrap_95ci"]
+            result["noise_ceiling"].update({
+                "spearman_upper_95_reliability_adjusted_approx": float(np.clip(ci["spearman"][1] / scale, -1.0, 1.0)),
+                "pearson_upper_95_reliability_adjusted": float(np.clip(ci["pearson"][1] / scale, -1.0, 1.0)),
+                "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation.",
+            })
         mask = np.isfinite(se) & (se > 0) & (df.epsilon.abs() > 1.96 * se)
         result["exploratory_source_SE_subset"] = metrics(df.epsilon[mask], df.model_interaction[mask], threshold)
     (out / "metrics.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
