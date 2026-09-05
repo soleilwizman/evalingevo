@@ -80,7 +80,9 @@ biological conclusions.
   the bootstrap interval. These quantities assume independent classical
   measurement error; they are a noise diagnostic, not a proof that all
   residual variation is measurement noise.
-- In the tracked 2,833-pair run, `Var(epsilon)=0.12514` and mean
+- In the tracked 2,833-pair run, raw Evo Spearman is `0.01761` with a
+  95% cluster-bootstrap interval of `[-0.02102, 0.05325]`. `Var(epsilon)=0.12514`
+  and mean
   `epsilon_se^2=0.08937`, giving `R=0.28589` and a perfect-predictor observed
   correlation ceiling of `sqrt(R)=0.53468`. Only 256/2,833 pairs (9.04%) meet
   `|epsilon| >= 1.96 SE`. The raw Spearman cluster-bootstrap upper limit is
