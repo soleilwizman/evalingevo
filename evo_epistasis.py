@@ -16,8 +16,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import pearsonr, rankdata, spearmanr
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+from scipy.stats import pearsonr, spearmanr
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -62,7 +62,7 @@ def mutate(ref, changes):
 def load_quartets(path):
     """Load and strictly validate one K562 row per WT/A/B/AB quartet."""
     df = pd.read_csv(path)
-    required = {"pair_id", "group_id", "condition", "pos_a", "pos_b", "distance", "epsilon", "flip"}
+    required = {"pair_id", "group_id", "condition", "pos_a", "pos_b", "distance", "epsilon"}
     required |= {f"{kind}_{state}" for kind in ("seq", "id", "y") for state in STATES}
     if missing := required - set(df):
         raise ValueError(f"Missing columns: {sorted(missing)}")
@@ -77,19 +77,14 @@ def load_quartets(path):
         if not all(seq_id(s) == i for s, i in zip(seq, df[f"id_{state}"])):
             raise ValueError("Sequence hash mismatch")
         df[f"y_{state}"] = pd.to_numeric(df[f"y_{state}"], errors="raise")
-    numeric = [f"y_{s}" for s in STATES] + ["epsilon", "distance", "pos_a", "pos_b", "flip"]
+    numeric = [f"y_{s}" for s in STATES] + ["epsilon", "distance", "pos_a", "pos_b"]
     if not np.isfinite(df[numeric].to_numpy(float)).all():
         raise ValueError("Nonfinite measurement or coordinate")
     if "epsilon_se" in df:
         df["epsilon_se"] = pd.to_numeric(df["epsilon_se"], errors="raise")
         if not np.isfinite(df.epsilon_se.to_numpy(float)).all() or (df.epsilon_se < 0).any():
             raise ValueError("epsilon_se must be finite and nonnegative")
-    if not df.flip.isin((-1.0, 1.0)).all():
-        raise ValueError("flip must be exactly -1 or +1")
-    lowest = df[[f"y_{s}" for s in STATES]].to_numpy(float).argmin(axis=1)
-    if not np.array_equal(df.flip.to_numpy(float), np.where(np.isin(lowest, (0, 3)), 1.0, -1.0)):
-        raise ValueError("flip must put the lowest-activity diplotype in the reference position")
-    expected = df.flip * (df.y_a + df.y_b - df.y_wt - df.y_ab)
+    expected = df.y_a + df.y_b - df.y_wt - df.y_ab
     if not np.allclose(df.epsilon, expected, atol=1e-8, rtol=1e-8):
         raise ValueError(f"epsilon must use {CONTRAST}")
     for row in df.itertuples():
@@ -99,39 +94,6 @@ def load_quartets(path):
         if (da[0][0] + 1, db[0][0] + 1, db[0][0] - da[0][0]) != (row.pos_a, row.pos_b, row.distance):
             raise ValueError(f"{row.pair_id}: mutation coordinates do not match sequences")
     return df
-
-
-def ensure_flip(quartets_path):
-    """Add flip / epsilon_refalt / labels to an older quartets file, once, in place.
-
-    Everything needed is already in data/audit.csv.gz next to it, so this needs
-    no download. Files that already carry a flip column are left alone.
-    """
-    quartets_path = Path(quartets_path)
-    q = pd.read_csv(quartets_path)
-    if "flip" in q.columns:
-        return False
-    audit_path = quartets_path.with_name("audit.csv.gz")
-    if not audit_path.exists():
-        raise ValueError(f"{quartets_path} predates the allele recoding and {audit_path} is missing")
-    a = pd.read_csv(audit_path)
-    a["key"] = (a.v1.astype(str) + ";" + a.v2.astype(str) + ";" + a.center_variant.astype(str)
-                + ";" + a.window.astype(str) + ";" + a.library.astype(str))
-    a = a.dropna(subset=["key"]).drop_duplicates("key")
-    q["key"] = q.pair_id.str.split("|").str[0]
-    if (missing := int((~q.key.isin(set(a.key))).sum())):
-        raise ValueError(f"{missing} quartets have no matching audit row")
-    q = q.merge(a[["key", "int_emVar", "any_emVar"]], on="key", how="left").drop(columns="key")
-    y = q[[f"y_{s}" for s in STATES]].to_numpy(float)
-    q["flip"] = np.where(np.isin(y.argmin(axis=1), (0, 3)), 1.0, -1.0)
-    q["epsilon_refalt"] = q.epsilon.astype(float)
-    q["epsilon"] = q.flip * q.epsilon_refalt
-    quartets_path.rename(quartets_path.with_name(quartets_path.name.replace(".csv.gz", ".pre_flip.csv.gz")))
-    q.to_csv(quartets_path, index=False)
-    print(f"recoded {len(q)} quartets in place: flip=-1 on {int((q.flip < 0).sum())}, "
-          f"{int((q.int_emVar == True).sum())} labelled non-additive, "
-          f"{(q.epsilon > 0).mean():.1%} dampening (paper reports 77.2%)")
-    return True
 
 
 def parse_variant(value):
@@ -225,13 +187,12 @@ def prepare_siraj(windows_path, code_zip, out, cell="K562", min_dna=20.0, max_se
             epsilon = y[1] + y[2] - y[0] - y[3]
             if not np.isfinite(row.int_log2Skew) or not np.isclose(epsilon, -row.int_log2Skew, atol=1e-6, rtol=1e-6):
                 raise ValueError("interaction_contrast_mismatch")
-            accepted.append((pair_id, seqs, y, row.int_log2SkewSE, chrom, start, end,
-                             getattr(row, "int_emVar", None), getattr(row, "any_emVar", None)))
+            accepted.append((pair_id, seqs, y, row.int_log2SkewSE, chrom, start, end))
             audit.append(dict(status="accepted", reason="", **row._asdict()))
         except ValueError as error:
             audit.append(dict(status="excluded", reason=str(error), pair_id=pair_id, **row._asdict()))
     rows, active_chrom, active_end, group = [], None, -1, -1
-    for pair_id, seqs, y, epsilon_se, chrom, start, end, int_emvar, any_emvar in sorted(accepted, key=lambda x: (x[4], x[5], x[6])):
+    for pair_id, seqs, y, epsilon_se, chrom, start, end in sorted(accepted, key=lambda x: (x[4], x[5], x[6])):
         if chrom != active_chrom or start > active_end:
             group += 1; active_chrom, active_end = chrom, end
         active_end = max(active_end, end)
@@ -244,13 +205,7 @@ def prepare_siraj(windows_path, code_zip, out, cell="K562", min_dna=20.0, max_se
                "pos_a": pos_a, "pos_b": pos_b, "distance": pos_b - pos_a}
         for state, seq, value in zip(STATES, ordered_seq, ordered_y):
             row.update({f"seq_{state}": seq, f"id_{state}": seq_id(seq), f"y_{state}": value})
-        # Paper Methods, "Non-additive effect estimation and diplotype analyses": alleles are
-        # recoded so the LOWEST-activity diplotype is the reference. The four diplotypes pair into
-        # complements (wt<->ab, a<->b), so this can only ever flip the sign of the second difference.
-        flip = 1.0 if int(np.argmin(ordered_y)) in (0, 3) else -1.0
-        raw = ordered_y[1] + ordered_y[2] - ordered_y[0] - ordered_y[3]
-        row.update(flip=flip, epsilon=flip * raw, epsilon_refalt=raw, epsilon_se=epsilon_se,
-                   int_emVar=int_emvar, any_emVar=any_emvar)
+        row.update(epsilon=ordered_y[1] + ordered_y[2] - ordered_y[0] - ordered_y[3], epsilon_se=epsilon_se)
         rows.append(row)
     quartets = pd.DataFrame(rows)
     if quartets.empty:
@@ -404,74 +359,6 @@ def noise_ceiling(y, epsilon_se, significance_z=1.96):
     }
 
 
-def auroc(score, label):
-    """Rank-based AUROC. Ties split evenly. None when either class is empty."""
-    score, label = np.asarray(score, float), np.asarray(label, int)
-    keep = np.isfinite(score)
-    score, label = score[keep], label[keep]
-    n_pos, n_neg = int((label == 1).sum()), int((label == 0).sum())
-    if n_pos == 0 or n_neg == 0:
-        return None
-    ranks = rankdata(score)
-    return float((ranks[label == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
-
-
-def out_of_fold_probabilities(df, columns, label, folds, seed):
-    """Grouped out-of-fold logistic predictions; folds respect overlapping regions."""
-    x = df[columns].to_numpy(float)
-    if not np.isfinite(x).all():
-        raise ValueError("Nonfinite detection feature")
-    out = np.full(len(df), np.nan)
-    split = GroupKFold(n_splits=folds, shuffle=True, random_state=seed)
-    for train, test in split.split(df, groups=df.group_id):
-        if len(np.unique(label[train])) < 2:
-            continue
-        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=5000, class_weight="balanced"))
-        out[test] = model.fit(x[train], label[train]).predict_proba(x[test])[:, 1]
-    return out
-
-
-def detection(df, folds=5, seed=0, n_boot=1000, covariates=("distance", "single_effect", "gc")):
-    """Can the model flag which pairs interact, beyond cheap covariates?
-
-    Labels are the published non-additive calls (int_emVar). The comparison that
-    matters is the covariates-only model against the same model plus |interaction|,
-    with a paired cluster bootstrap on the difference.
-    """
-    if "int_emVar" not in df:
-        return None
-    label = (df.int_emVar == True).to_numpy(int)
-    if label.sum() < 2 or label.sum() == len(label):
-        return None
-    d = df.assign(abs_model=df.model_interaction.abs(),
-                  closeness=-df.distance.to_numpy(float),
-                  single_effect=(df.y_a - df.y_wt).abs() + (df.y_b - df.y_wt).abs(),
-                  gc=[(s.count("G") + s.count("C")) / len(s) for s in df.seq_wt])
-    singles = {name: auroc(d[name], label) for name in
-               ("abs_model", "closeness", "single_effect", "gc")}
-    base, full = list(covariates), list(covariates) + ["abs_model"]
-    oof_base = out_of_fold_probabilities(d, base, label, folds, seed)
-    oof_full = out_of_fold_probabilities(d, full, label, folds, seed)
-    keep = np.isfinite(oof_base) & np.isfinite(oof_full)
-    auc_base, auc_full = auroc(oof_base[keep], label[keep]), auroc(oof_full[keep], label[keep])
-    rng = np.random.default_rng(seed)
-    groups = [np.flatnonzero((df.group_id.to_numpy() == g) & keep) for g in df.group_id.unique()]
-    groups = [g for g in groups if len(g)]
-    gaps = []
-    for _ in range(n_boot):
-        idx = np.concatenate([groups[i] for i in rng.integers(len(groups), size=len(groups))])
-        a, b = auroc(oof_full[idx], label[idx]), auroc(oof_base[idx], label[idx])
-        if a is not None and b is not None:
-            gaps.append(a - b)
-    return {"n": int(keep.sum()), "n_positive": int(label[keep].sum()),
-            "single_feature_auroc": singles,
-            "covariates": base, "auroc_covariates_only": auc_base,
-            "auroc_with_model": auc_full,
-            "auroc_gain_from_model": None if None in (auc_base, auc_full) else auc_full - auc_base,
-            "auroc_gain_95ci": np.quantile(gaps, [0.025, 0.975]).tolist() if gaps else None,
-            "label_source": "int_emVar (published non-additive call)"}
-
-
 def sequence_only_features(quartets):
     """Build sequence/design features without using measured activity values."""
     features = np.zeros((len(quartets), len(STATES) * len(KMER_VOCAB) + 3), float)
@@ -496,7 +383,7 @@ def add_predictions(quartets, scores, folds=5, seed=0):
         df[f"s_{state}"] = df[f"id_{state}"].map(mapping)
     if not np.isfinite(df[[f"s_{s}" for s in STATES]].to_numpy()).all():
         raise ValueError("Missing or nonfinite sequence score")
-    df["model_interaction"] = (df.s_a + df.s_b - df.s_wt - df.s_ab) * df["flip"]
+    df["model_interaction"] = df.s_a + df.s_b - df.s_wt - df.s_ab
     if not 2 <= folds <= df.group_id.nunique():
         raise ValueError("Invalid grouped-fold count")
     y = df.epsilon.to_numpy()
@@ -586,7 +473,6 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
     if n_boot < 1 or threshold < 0:
         raise ValueError("bootstrap must be positive and threshold nonnegative")
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    ensure_flip(quartets_path)
     df, coefficients = add_predictions(load_quartets(quartets_path), pd.read_csv(scores_path), folds, seed)
     df.to_csv(out / "predictions.csv", index=False)
     select_cases(df, threshold=threshold).to_csv(out / "cases.csv", index=False)
@@ -605,14 +491,9 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
               "cluster_bootstrap_95ci": cluster_intervals(df, n_boot, seed), "strata": strata,
               "settings": {"folds": folds, "seed": seed, "bootstrap": n_boot, "sign_threshold": threshold},
               "inputs": {"quartets_sha256": file_hash(quartets_path), "scores_sha256": file_hash(scores_path)}}
-    result["detection"] = detection(df, folds, seed, n_boot)
     if "epsilon_se" in df:
         se = pd.to_numeric(df.epsilon_se, errors="coerce")
-        # Reliability is measured on the un-flipped contrast. The flip is chosen from the
-        # measured activities, so the recoded epsilon is outcome-dependent and its variance
-        # is not a clean denominator for a noise ceiling.
-        symmetric = pd.to_numeric(df.epsilon_refalt, errors="coerce").to_numpy() if "epsilon_refalt" in df else y
-        result["noise_ceiling"] = noise_ceiling(symmetric, se)
+        result["noise_ceiling"] = noise_ceiling(y, se)
         reliability = result["noise_ceiling"]["reliability"]
         if reliability > 0:
             scale = np.sqrt(reliability)
