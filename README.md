@@ -1,222 +1,78 @@
-# Evo 2 human regulatory epistasis MVP
+Proposal: Does Evo 2 capture human regulatory epistasis (and what explains its performance)?
 
-This repository tests one question: **does frozen Evo 2 sequence likelihood
-predict experimentally measured non-additive effects between two nearby human
-regulatory variants?** It uses Siraj et al.'s four-haplotype MPRA data in K562.
-It is deliberately one dataset, one cell type, one checkpoint, and one signed
-definition of epistasis.
+It has long been known that nearby (cis) regulatory variants can amplify or suppress one another’s effects on gene expression. Siraj et al. analyzed >2,500 pairs of fine-mapped complex-trait variants sitting close together in the same regulatory element and found that 180 had non-additive interactions; 139 were interfering, and 41 were synergistic – in one example, two C alleles at rs9294987 and rs9294988 near THBS2 jointly create a Jun motif and significantly increase reporter activity. Such examples motivate testing whether Evo 2 can predict such interactions, followed by a mechanistic analysis of where and how the interaction signal appears inside the model.
 
-## Fixed protocol
+(A) Prior work
+Existing studies establish precedents for evaluating genomic models on interacting variants. GraphFLA evaluates Evo 2 across combinatorial fitness landscapes and examines how prediction quality relates to epistasis. Preliminary bacterial analyses include likelihood interaction contrasts and comparisons between embedding-derived and experimentally measured epistasis. CREME interprets Enformer through in silico perturbation and characterizes interactions between regulatory elements as additive, superadditive, and subadditive, but does so without experimental epistasis as ground truth. Phenformer, which stacks a trained transformer on frozen embeddings for phenotype prediction, names Evo as a model that "did not connect the genome sequence to organism-scale polygenic phenotypes." Our intended contribution is a focused evaluation of Evo 2's direct sequence scores on human regulatory variant pairs as well as an account of the computations behind the result. 
 
-For reference (`WT`), two single mutants (`A`, `B`), and their double (`AB`),
-we use Siraj's reporting direction:
+(B) Aims
+Aim 1: Test whether Evo’s existing sequence scores predict experimental interactions.
+The recently published Siraj et al. MPRA dataset (Feb 2026) provides activity measurements for reference sequences (R), individual variants (A and B), and their combinations (AB). Interaction labels in Siraj et al. come from a fixed-effect meta-analysis across up to six windows and cell types, with between-window covariance estimated empirically from shared positions, so we can score against the interaction effect. 
+For experimental log2 activity y and Evo sequence score s, we can calculate expected additive effect minus observed double-mutant effect:
+ε = y(A) + y(B) − y(WT) - y(AB)
+I = s(A) + s(B) − s(WT) - s(AB).
 
-```text
-experimental epistasis = y(A) + y(B) - y(WT) - y(AB)
-Evo interaction        = s(A) + s(B) - s(WT) - s(AB)
-```
+A pair with ε > 0 is interfering; a pair with ε < 0 is synergistic, meaning it overshoots. I is defined in the same direction, so positive I is Evo predicting interference.
 
-Both quantities are **expected additive minus observed double**. On the MPRA
-log2-activity scale, positive experimental epistasis means the double has lower
-activity than expected (dampening/interference); negative means higher activity
-than expected (synergy). These signs do not mean beneficial/pathogenic. The
-released `int_log2Skew` coefficient is oriented oppositely, so preprocessing
-verifies `epsilon = -int_log2Skew` rather than silently changing signs later.
+Aim 2: Investigate why Evo performs that way using mechanistic interpretability.
+On a prespecified subset of correctly and incorrectly predicted pairs, we can compare aligned hidden activations across all four genotypes:
+Δh = h(A) + h(B) − h(WT) - h(AB)
 
-The model score is frozen Evo 2 7B base autoregressive log-likelihood:
+Following the same convention as ε, positive Δh means the double-mutant activation falls short of that combination and negative Δh means it overshoots. We rank by magnitude, since a departure in either direction is evidence of a non-additive internal computation.
 
-```text
-s(x) = mean(sum log P(x_t | BOS, x_<t),
-            sum log P(RC(x)_t | BOS, RC(x)_<t))
-```
+We can examine a small, fixed set of layers and positions at or downstream of the variants in each orientation, then relate interaction-sensitive activations to regulatory motifs, using matched controls for generic mutation responses. If we find features that respond strongly to the double mutant but weakly to the reference and either single mutant, or vice versa, the next step would be to patch or ablate these features’ contribution to Evo’s internal activations to better understand how Evo encodes interaction. We can also project activations into SAE features and identify features whose quartet contrast is unusually large. We will examine whether these features correspond to plausible sequence patterns, such as motif creation or disruption, using sequence controls and matched near-additive pairs. We can optionally compare results to activity models such as Borzoi or AlphaGenome
+The project should yield a reproducible Python pipeline for computing experimental and Evo-derived epistasis, benchmark metrics comparing Evo 2 interaction scores to measured MPRA interactions, baseline comparisons against zero-interaction, distance-based, and simple regression models, and a short mechanistic case study of several Evo successes and failures.
 
-Every observed base in the fixed 200-nt sequence is scored. The implementation
-uses Evo's EOD token as BOS, a one-token prediction shift, FP32 log-softmax, and
-FP64 accumulation. Reverse-complement averaging is two separate causal passes;
-it is not bidirectional conditioning. Masked marginal scoring is inappropriate
-because Evo is autoregressive.
+(3) MVP
+We selected one cell type (K562) and one library in the dataset. After filtering, there were 2833 quartet groups where all four sequences were present and both variants were single-base substitutions. Every variant sequence had to have at least 20 mean DNA counts and SE of 0.5 or less (one could also weigh each pair by 1/(SE^2) for the log2 RNA/DNA activity measurement. The 2,833 pairs fall into 2,251 groups of overlapping genomic regions, accounted for in cross-validation. Siraj et al. assayed each pair in up to six overlapping 200-base windows that shift the variants' position within the oligo – for each quartet, we selected the “middle” window, in which the first variant of the pair sits at position 100, and the second variant within 100bp up or downstream. 
 
-### Dataset and filtering
+Using the frozen evo2_7b_base checkpoint, we could evaluate for each quartet (1) Evo sequence score S (s(A) + s(B) − s(WT) - s(AB)) and (2) experimental activity scoring (ε = y(A) + y(B) − y(WT) - y(AB)). We ran a Spearman correlation between the ranking of Evo interaction m and the ranking of measured experimental interaction epsilon across the 2,833 pairs; for uncertainty, we resampled overlapping-region groups 1,000 times and recalculated the statistical measures seen in the figures. 
 
-The included `data/quartets.csv.gz` contains 2,833 reconstructed quartets in
-2,251 overlapping-region groups. Preprocessing was fixed before Evo scoring:
+Because Evo log-likelihood units and MPRA log2-activity units differ, a supervised straight-line calibration could convert Evo’s interaction score into a useful numerical prediction (“calibrated Evo”). After modeling [experimental activity measurement = intercept + slope × Evo score (calculated above)] where (x,y) = (Evo score, experimental activity measurement), we ran five-fold cross-validation, calculating RMSE on the 20% held-out set between predicted epsilon and measured epsilon.
+ 
+Separately, we ran a supervised ridge regression model using only sequence features: counts of DNA words of lengths one, two, and three in each quartet member, plus variant positions and separation distance.
 
-1. Keep K562, the 200-nt middle window, and `center_variant=var1`.
-2. Select the lexicographically first library before examining measurements.
-3. Keep distinct same-chromosome SNVs with unambiguous A/C/G/T sequences.
-4. Verify both alleles and the overlapping sequence against released oligos.
-5. Require every haplotype to have mean plasmid count at least 20 and activity
-   standard error at most 0.5 log2 units.
-6. Require all four measurements; never impute a missing single or filter on
-   interaction significance or model output.
-7. Keep overlapping fragments in the same fold and bootstrap cluster.
+(4) Preliminary results
+Measured experimental activity variance is 0.12514, and the average squared measurement standard error is 0.08937.
+Comparison
 
-`data/audit.csv.gz` records retained, excluded, and duplicate-library source
-rows. `data/provenance.json` records source hashes and preprocessing settings.
-The original four-haplotype design file has not yet been independently checked;
-verify 20 fixed examples against it or with the authors before presenting
-biological conclusions.
 
-### Evaluation
+Result
 
-- Primary zero-shot result: raw Spearman correlation between Evo interaction
-  and experimental epistasis; Pearson is reported alongside it.
-- Prediction error: five-fold grouped calibration
-  `epsilon_hat = intercept + slope * Evo_interaction`, evaluated only
-  out-of-fold. RMSE and MAE are therefore in log2-activity units. Raw likelihood
-  and MPRA activity are never compared directly by RMSE.
-- Direction: sign accuracy and balanced sign accuracy at
-  `|experimental epistasis| >= 0.25`, with zero predictions treated as
-  abstentions and coverage reported.
-- Uncertainty: 1,000 overlapping-region cluster bootstraps for correlations and
-  paired RMSE improvements. Predictions remain fixed, so intervals are
-  conditional on the selected folds and measured effects.
-- Measurement noise: when `epsilon_se` is available, `metrics.json` reports a
-  classical reliability diagnostic
-  `R = 1 - mean(epsilon_se^2) / Var(epsilon)`. Its `sqrt(R)` value is the
-  estimated maximum observed correlation for a perfect predictor. The report
-  also counts interactions distinguishable from zero at `|epsilon| >= 1.96 SE`
-  and gives an approximate reliability-adjusted upper correlation limit from
-  the bootstrap interval. These quantities assume independent classical
-  measurement error; they are a noise diagnostic, not a proof that all
-  residual variation is measurement noise.
-- In the tracked 2,833-pair run, raw Evo Spearman is `0.01761` with a
-  95% cluster-bootstrap interval of `[-0.02102, 0.05325]`. `Var(epsilon)=0.12514`
-  and mean
-  `epsilon_se^2=0.08937`, giving `R=0.28589` and a perfect-predictor observed
-  correlation ceiling of `sqrt(R)=0.53468`. Only 256/2,833 pairs (9.04%) meet
-  `|epsilon| >= 1.96 SE`. The raw Spearman cluster-bootstrap upper limit is
-  `0.05325`; dividing by `sqrt(R)` gives an approximate reliability-adjusted
-  95% upper limit of `0.09959` (Spearman correction is heuristic).
-- Baselines: zero interaction, training-fold mean/median, majority sign, an
-  exactly additive GC-count negative control, and a fixed-alpha supervised ridge
-  using only sequence k-mer counts and variant coordinates. The sequence-only
-  ridge is fit inside the grouped folds; it uses training epsilon labels but no
-  measured single- or double-mutant activity values, so it has no algebraic
-  overlap with the target construction.
-- Outputs: `predictions.csv`, `results_table.csv`, `metrics.json`, `cases.csv`, and one six-panel
-  `plots.png` covering raw/calibrated scatterplots, both distributions, distance,
-  and interaction magnitude.
 
-## Install and test
+Comments
+Spearman of Evo score versus measured experimental activity
+0.0176
+ 95% interval -0.0210 to 0.0533
+Almost no rank association
+Pearson correlation of Evo score versus measured experimental activity
+0.0011
+ 95% interval -0.0384 to 0.0414
+Almost no linear association
+RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured experimental activity
+RMSE 0.35427
+Measurement of how close are Evo-based numerical predictions are to experimental reality
+RMSE of training-fold mean reference versus measured experimental activity
+RMSE 0.35391
+.
+RMSE of zero prediction versus measured experimental activity (Predicted score = 0 for every pair; additive assumption)
+RMSE 0.35376
+Simple reference prediction
+RMSE of sequence-based ridge regression model versus measured experimental activity
+RMSE 0.37337
+Simple reference prediction
 
-Use Python 3.11 or 3.12:
+Note: While activity (the measured output) is not 1:1 comparable with Evo’s predicted “naturalness” score, an enhancer's only job is turning genes on. So, to an extent, in this case, "does this variant matter" and "does it change how much the gene turns on" are the same question. 
 
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-python -m unittest -v test_evo_epistasis.py
-```
 
-Run the included biological data through the algebraic GC negative control:
+Across all 2,833 pairs, the calibrated Evo prediction was slightly less accurate than predicting zero. Calibrated Evo has RMSE 0.35427, while the zero-interaction reference has RMSE 0.35376. The difference is 0.00051 log2-activity units, with Evo slightly worse. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured epsilon is 0.12514, and the mean squared standard error is 0.08937. 
 
-```bash
-evo-epi score \
-  --quartets data/quartets.csv.gz \
-  --output runs/gc_scores.csv --backend gc
+(5) Next Steps
 
-evo-epi evaluate \
-  --quartets data/quartets.csv.gz \
-  --scores runs/gc_scores.csv \
-  --label "GC negative control — not Evo" \
-  --out runs/gc
-```
+Add > 200 bp context to the regions and see how adding flanking base pairs affects predictive power. 
+Add complete quartets from other measured cells and independent interaction datasets and compare sequence-only predictions with predictions that also receive cell information, such as cell identity or a prespecified expression profile.
+Extract matched vectors for WT, A, B, and AB at a prespecified set of layers and positions and train a small regularized probe to predict measured activity from this vector. For features that seem to play a role in predicting variant interaction, we can examine matched sequence changes, motif annotations, spacing, and cell dependence, playing with feature activations at aligned positions to see how such changes move predictions.
+Resolve whether sequence pairs with additive effects lie closer together in Evo’s embedding space than sequence pairs with nonadditive effects – and whether contrastive learning, teaching the embedding space specifically about additive and nonadditive genetic interactions, could improve results.
+Understand whether preference alignment with MPRA activity can install regulatory signals that pretraining demonstrably failed to learn, using a variation of a model like ProteinDPO.  
+Resolve whether selective transfer of background-dependent mutation effects, evaluated against measured phenotypes and held-out variant combinations.
 
-Its interaction must be zero for every pair; correlations are correctly
-reported as `null` because a constant cannot be correlated.
-
-## Run Evo on a GPU pod (RunPod or Arc)
-
-Use a supported Linux/CUDA environment and pin the actual model snapshot. Start
-at batch size 1 and test repeatability and batch-size consistency on 20 quartets.
-
-```bash
-python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install flash-attn==2.8.0.post2 --no-build-isolation
-python -m pip install evo2
-
-evo-epi score \
-  --quartets data/quartets.csv.gz \
-  --output runs/evo_scores.csv \
-  --backend evo --checkpoint evo2_7b_base \
-  --revision ACTUAL_HUGGING_FACE_SNAPSHOT --batch-size 1
-
-evo-epi evaluate \
-  --quartets data/quartets.csv.gz \
-  --scores runs/evo_scores.csv \
-  --label "Evo 2 7B base" --out runs/evo
-```
-
-The score CSV doubles as a resumable cache; completed sequences are not scored
-again. Its adjacent metadata JSON fixes the checkpoint, revision, score,
-environment, input hash, and code hash. `--revision` records provenance but
-does not itself pin downloads; use an already pinned snapshot or pass a fixed
-local weight file with `--weights`.
-
-If a collaborator scores the sequences, their CSV must contain
-`sequence_id,forward,reverse,score` and must be accompanied by a manifest of the
-same choices. It can then be passed directly to `evo-epi evaluate`.
-
-## Rebuild from the public source
-
-Download `data_preprocess.zip` and `code.zip` from
-[Siraj et al., Zenodo 15297965](https://zenodo.org/records/15297965), extract
-`data/preprocess/haplos/all_windows.txt.gz`, then run:
-
-```bash
-evo-epi prepare-siraj \
-  --windows data/raw/all_windows.txt.gz \
-  --code-zip data/raw/code.zip \
-  --out data/rebuilt
-```
-
-The resulting `quartets.csv.gz`, `audit.csv.gz`, and `provenance.json` must match
-the documented source hashes and counts before they replace the included data.
-A single sensitivity analysis may relax `--max-se` from 0.5 to 1.0; do not tune
-filters after seeing Evo performance.
-
-## Bounded mechanistic follow-up
-
-`runs/evo/cases.csv` deterministically selects several correct-sign cases,
-incorrect-sign cases, and near-additive controls after the benchmark. For these
-only, save aligned activations for WT/A/B/AB at prespecified layers and positions
-at or downstream of both variants in both orientations. Use the aligned contrast
-
-```text
-Delta h = h(A) + h(B) - h(WT) - h(AB)
-```
-
-The helper `rank_feature_contrasts` applies the same operation to released SAE
-features. A large contrast nominates an interaction-sensitive representation;
-it does not establish a biological mechanism. Only controlled patching or
-ablation that predictably changes Evo's sequence-level interaction, relative to
-unrelated features and matched near-additive pairs, supports a model-mechanistic
-claim. SAE work is conditional on exact checkpoint, layer, and activation-site
-compatibility. Probes, LoRA/fine-tuning, additional datasets, and broad causal
-claims are outside this MVP.
-
-## Success criterion
-
-Engineering success is a reproducible benchmark on at least 1,000 validated
-quartets with complete provenance, cached Evo scores, grouped evaluation,
-baselines, intervals, plots, and retained null results. Evidence supporting
-further work is a positive raw Spearman interval excluding zero plus lower
-out-of-fold RMSE than zero and training-mean baselines; improvement over the
-sequence-only ridge and balanced sign accuracy above chance are stronger tests.
-A reproducible null result still completes the MVP and would show that direct
-sequence likelihood is not sufficient for this assay—not that Evo contains no
-interaction-relevant representation.
-
-## Files
-
-```text
-evo_epistasis.py          complete implementation and CLI
-test_evo_epistasis.py     protocol and leakage tests
-data/quartets.csv.gz      ready-to-score K562 quartets
-data/audit.csv.gz         preprocessing audit trail
-data/provenance.json      source hashes and fixed settings
-README.md                 protocol, commands, and limitations
-pyproject.toml            pinned CPU analysis environment
-```
