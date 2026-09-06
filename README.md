@@ -34,13 +34,7 @@ Separately, we ran a supervised ridge regression model using only sequence featu
 
 (4) Preliminary results
 Measured experimental activity variance is 0.12514, and the average squared measurement standard error is 0.08937.
-Comparison
 
-
-Result
-
-
-Comments
 Spearman of Evo score versus measured experimental activity
 0.0176
  95% interval -0.0210 to 0.0533
