@@ -10,6 +10,7 @@ comparable with the Evo 2 probe.
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,48 @@ from scipy.stats import spearmanr
 from evo_probe import elements, kmers, out_of_fold
 
 MULTIPLE = 128
+
+
+def find_layers(model):
+    """Find the repeated user-facing transformer layers by module name."""
+    patterns = (
+        re.compile(r"^(.*(?:^|\.)(?:layers|blocks|h))\.(\d+)$"),
+        re.compile(r"^(.*\.encoder\.layer)\.(\d+)$"),
+    )
+    candidates = {}
+    for name, module in model.named_modules():
+        for pattern in patterns:
+            match = pattern.match(name)
+            if match:
+                candidates.setdefault(match.group(1), {})[int(match.group(2))] = (name, module)
+                break
+
+    complete = []
+    for parent, items in candidates.items():
+        indices = sorted(items)
+        if indices == list(range(len(indices))) and len(indices) > 1:
+            complete.append((len(indices), parent, items))
+    if not complete:
+        raise RuntimeError(
+            "Could not find a contiguous repeated layer stack. Available module names:\n"
+            + "\n".join(name for name, _ in model.named_modules() if name)[:4000]
+        )
+
+    _, parent, items = max(complete, key=lambda entry: entry[0])
+    layers = [items[i] for i in range(len(items))]
+    print(f"using {len(layers)} named layers under {parent}", flush=True)
+    for index, (name, _) in enumerate(layers):
+        print(f"  L{index}: {name}", flush=True)
+    return layers
+
+
+def tensor_output(output, name):
+    """Extract a batch-first hidden-state tensor from a module output."""
+    if isinstance(output, (tuple, list)):
+        output = next((item for item in output if hasattr(item, "ndim")), None)
+    if not hasattr(output, "ndim") or output.ndim != 3:
+        raise RuntimeError(f"layer {name} returned an unexpected output")
+    return output
 
 
 def main():
@@ -42,6 +85,7 @@ def main():
     model = AutoModelForMaskedLM.from_pretrained(args.checkpoint, **kw).float()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     model.eval().to(device)
+    named_layers = find_layers(model)
 
     # where sequence tokens start, so pooling covers the real bases only
     probe_seq = "ACGT" * (MULTIPLE // 4)
@@ -63,7 +107,16 @@ def main():
     print(f"{len(seqs)} elements, {length} bp padded to {target}, "
           f"pooling {span.start}:{span.stop} on {device}", flush=True)
 
-    chunks = {}
+    chunks = {i: [] for i in range(len(named_layers))}
+    captured = {}
+
+    def capture(index, name):
+        def hook(_module, _inputs, output):
+            captured[index] = tensor_output(output, name)
+        return hook
+
+    hooks = [module.register_forward_hook(capture(i, name))
+             for i, (name, module) in enumerate(named_layers)]
     for start in range(0, len(seqs), args.batch_size):
         batch = seqs[start:start + args.batch_size]
         ids = torch.tensor([tok(pad(s), add_special_tokens=True)["input_ids"] for s in batch],
@@ -71,21 +124,33 @@ def main():
         got = "".join(tok.convert_ids_to_tokens(ids[0, span].tolist()))
         if got != batch[0]:
             raise SystemExit(f"token alignment wrong: {got[:20]} vs {batch[0][:20]}")
+        captured.clear()
         with torch.inference_mode():
-            states = model(input_ids=ids, output_hidden_states=True).hidden_states
-        for i, state in enumerate(states):
+            model(input_ids=ids)
+        if len(captured) != len(named_layers):
+            missing = sorted(set(range(len(named_layers))) - set(captured))
+            raise RuntimeError(f"named layer hooks did not fire: {missing}")
+        for i, (name, _) in enumerate(named_layers):
+            state = captured[i]
+            if state.shape[0] != len(batch):
+                raise RuntimeError(f"layer {name} is not batch-first: {tuple(state.shape)}")
             real = state[:, span].float()
             vec = real.mean(1) if args.pooling == "mean" else real[:, -1]
+            if not torch.isfinite(vec).all():
+                raise RuntimeError(f"named layer {name} produced non-finite activations")
             chunks.setdefault(i, []).append(vec.cpu().numpy())
         if start % (args.batch_size * 25) == 0:
             print(f"  {start}/{len(seqs)}", flush=True)
 
+    for hook in hooks:
+        hook.remove()
     layers = sorted(chunks)
     for i in layers:
         np.save(out / f"X_{args.pooling}_L{i}.npy", np.concatenate(chunks[i]))
     el.drop(columns=["seq"]).to_csv(out / "elements.csv", index=False)
     (out / "meta.json").write_text(json.dumps(
         {"checkpoint": args.checkpoint, "pooling": args.pooling, "layers": layers,
+         "layer_names": [name for name, _ in named_layers],
          "width": int(np.concatenate(chunks[layers[-1]]).shape[1]), "n": len(el)},
         indent=2) + "\n")
 
