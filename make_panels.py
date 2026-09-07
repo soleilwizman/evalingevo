@@ -14,6 +14,7 @@ redrawn without refitting the wide probes.
 
 import argparse
 import json
+import textwrap
 from pathlib import Path
 
 import matplotlib
@@ -23,7 +24,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from evo_epistasis import gc_fraction, group_boot
+from evo_epistasis import gc_fraction, group_boot, out_of_fold_linear
 from evo_probe import elements, kmers, out_of_fold
 from single_variant import allele_features, single_variants
 
@@ -61,19 +62,24 @@ def single_variant_panels(cache):
 
     delta_kmers = cached(cache, "sv_delta_kmers",
                          lambda: kmers(seqs) - kmers(refs))
+
+    def fit(x):
+        # single_variant.py's protocol exactly: shuffled grouped folds, seed 0,
+        # ridge only for multi-column features.  Using evo_probe's unshuffled
+        # protocol here would put a different number on the same bar.
+        return out_of_fold_linear(x, y, groups, 5, ridge=x.shape[1] > 1, seed=0)
+
     fits = {
         "delta k-mers": (cached(cache, "sv_pred_delta_kmers",
-                                lambda: out_of_fold(delta_kmers, y, groups, 5)), "baseline"),
+                                lambda: fit(delta_kmers)), "baseline"),
         "allele identity": (cached(cache, "sv_pred_allele",
-                                   lambda: out_of_fold(allele_features(evo), y, groups, 5)), "baseline"),
+                                   lambda: fit(allele_features(evo))), "baseline"),
         "GC content": (cached(cache, "sv_pred_gc",
-                              lambda: out_of_fold(gc_fraction(seqs).reshape(-1, 1), y, groups, 5)), "baseline"),
+                              lambda: fit(gc_fraction(seqs).reshape(-1, 1))), "baseline"),
         "Evo 2 likelihood": (cached(cache, "sv_pred_evo",
-                                    lambda: out_of_fold(evo.delta_score.to_numpy().reshape(-1, 1),
-                                                        y, groups, 5)), "likelihood"),
+                                    lambda: fit(evo.delta_score.to_numpy().reshape(-1, 1))), "likelihood"),
         "NTv3 likelihood": (cached(cache, "sv_pred_ntv3",
-                                   lambda: out_of_fold(ntv3.delta_score.to_numpy().reshape(-1, 1),
-                                                       y, groups, 5)), "likelihood"),
+                                   lambda: fit(ntv3.delta_score.to_numpy().reshape(-1, 1))), "likelihood"),
     }
     ceiling = json.loads(Path("results/evo2_7b_base/single_variant.json").read_text())["zero_shot"]["ceiling"]
     return {
@@ -143,8 +149,12 @@ def style(axis):
 
 def draw(panel, path):
     scatters, y, groups = panel["scatters"], panel["y"], panel["groups"]
-    figure, axes = plt.subplots(1, len(scatters) + 1,
-                                figsize=(3.35 * (len(scatters) + 1), 3.9))
+    # The bar panel carries several multi-word labels, so give it more width
+    # than a scatter rather than shrinking the type.
+    figure, axes = plt.subplots(
+        1, len(scatters) + 1,
+        figsize=(3.35 * len(scatters) + 4.9, 4.0),
+        gridspec_kw={"width_ratios": [1] * len(scatters) + [1.45]})
     figure.patch.set_facecolor("white")
     for axis, (label, x, xlabel) in zip(axes, scatters):
         axis.scatter(x, y, s=5, alpha=0.22, linewidths=0, color=POINT, rasterized=True)
@@ -171,9 +181,9 @@ def draw(panel, path):
                   fontsize=8, color=INK)
     if panel["ceiling"]:
         bars.axhline(panel["ceiling"], color=MUTED, lw=1, ls=(0, (5, 4)), zorder=2)
-        bars.text(len(scored) - 0.4, panel["ceiling"], f" ceiling {panel['ceiling']:.2f}",
+        bars.text(len(scored) - 0.45, panel["ceiling"], f"ceiling {panel['ceiling']:.2f} ",
                   fontsize=8, color=MUTED, va="bottom", ha="right")
-    bars.set_xticks(x, [r[0].replace(" ", "\n", 1) for r in scored],
+    bars.set_xticks(x, ["\n".join(textwrap.wrap(r[0], 11)) for r in scored],
                     fontsize=8, color=INK)
     bars.set_ylabel("out-of-fold Spearman", fontsize=9, color=INK)
     bars.set_title("Every readout, one protocol\ngrouped five-fold, 95% interval",

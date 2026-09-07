@@ -1,0 +1,80 @@
+{
+  "n": 5666,
+  "target": "measured log2 effect of one substitution",
+  "protocol": "grouped five-fold shuffled seed 0; ridge for multi-column features; 95% interval resamples whole region groups",
+  "kmer_note": "the k-mer bar is the delta, counts in the alternate sequence minus the reference, which for one substitution is the words made and broken; absolute counts give -0.035",
+  "readouts": [
+    {
+      "label": "Evo 2 score",
+      "kind": "likelihood",
+      "spearman": -0.013901254252054263,
+      "ci": [
+        -0.043248283962995404,
+        0.016662302349448432
+      ],
+      "features": 1
+    },
+    {
+      "label": "NTv3 100M score",
+      "kind": "likelihood",
+      "spearman": 0.03183449912312418,
+      "ci": [
+        0.004892644631132226,
+        0.060640876955367774
+      ],
+      "features": 1
+    },
+    {
+      "label": "NTv3 650M score",
+      "kind": "likelihood",
+      "spearman": null,
+      "ci": null,
+      "not_computed": "no scoring run",
+      "not_computed_display": "no scoring\nrun"
+    },
+    {
+      "label": "GC content",
+      "kind": "baseline",
+      "spearman": -0.023993549217283455,
+      "ci": [
+        -0.05478902394092087,
+        0.007619061780222658
+      ],
+      "features": 1
+    },
+    {
+      "label": "1/2/3-mer delta",
+      "kind": "baseline",
+      "spearman": 0.17685510370295074,
+      "ci": [
+        0.146697982151155,
+        0.20436569169636654
+      ],
+      "features": 84
+    },
+    {
+      "label": "NTv3 100M probe",
+      "kind": "probe",
+      "spearman": null,
+      "ci": null,
+      "not_computed": "no variant embeddings",
+      "not_computed_display": "no variant\nembeddings"
+    },
+    {
+      "label": "NTv3 650M probe",
+      "kind": "probe",
+      "spearman": null,
+      "ci": null,
+      "not_computed": "no variant embeddings",
+      "not_computed_display": "no variant\nembeddings"
+    },
+    {
+      "label": "Evo 2 probe",
+      "kind": "probe",
+      "spearman": null,
+      "ci": null,
+      "not_computed": "no variant embeddings",
+      "not_computed_display": "no variant\nembeddings"
+    }
+  ]
+}

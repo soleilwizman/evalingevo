@@ -1,0 +1,58 @@
+{
+  "n": 2595,
+  "folds": 5,
+  "bootstrap": 1000,
+  "protocol": "grouped five-fold, folds unshuffled, RidgeCV inside each training fold; 95% interval resamples whole region groups",
+  "readouts": [
+    {
+      "label": "Evo 2 score",
+      "kind": "likelihood",
+      "spearman": 0.005881836782554304,
+      "ci": [
+        -0.036346202914842654,
+        0.04834777161840497
+      ],
+      "features": 1
+    },
+    {
+      "label": "NTv3 100M score",
+      "kind": "likelihood",
+      "spearman": 0.0686596824028171,
+      "ci": [
+        0.02382463988436486,
+        0.11180646939132756
+      ],
+      "features": 1
+    },
+    {
+      "label": "GC content",
+      "kind": "baseline",
+      "spearman": 0.32476905599617467,
+      "ci": [
+        0.2853009603842883,
+        0.3614022907911005
+      ],
+      "features": 1
+    },
+    {
+      "label": "1/2/3-mer counts",
+      "kind": "baseline",
+      "spearman": 0.45602395314995986,
+      "ci": [
+        0.4201520857061616,
+        0.48909945795830084
+      ],
+      "features": 84
+    },
+    {
+      "label": "NTv3 100M probe",
+      "kind": "probe",
+      "spearman": 0.442970944430591,
+      "ci": [
+        0.40439875388978275,
+        0.4764502058558378
+      ],
+      "features": 768
+    }
+  ]
+}
