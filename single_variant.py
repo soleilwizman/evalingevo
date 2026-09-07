@@ -31,6 +31,7 @@ from sklearn.preprocessing import StandardScaler
 
 from evo_epistasis import (auroc, element_kmers, gc_fraction, group_boot,
                            noise_ceiling, out_of_fold_linear)
+from evo_probe import paired_interval
 
 AUDIT = "data/audit.csv.gz"
 # var1 always sits at position 100 and is the "altref" haplotype; var2 is downstream
@@ -147,11 +148,22 @@ def supervised(table, folds, seed):
         return {"spearman": float(spearmanr(prediction, y).statistic),
                 "rmse": float(np.sqrt(np.mean((y - prediction) ** 2)))}
 
-    out = {name: scored(out_of_fold_linear(x, y, groups, folds,
-                                           ridge=x.shape[1] > 1, seed=seed))
-           for name, x in features.items()}
+    fitted = {name: out_of_fold_linear(x, y, groups, folds,
+                                       ridge=x.shape[1] > 1, seed=seed)
+              for name, x in features.items()}
+    out = {name: scored(prediction) for name, prediction in fitted.items()}
     out["training_mean"] = scored(mean_prediction)
     out["perfect_predictor_rmse_floor"] = float(np.sqrt(np.mean(table.se.to_numpy() ** 2)))
+
+    # The claim is the margin over the strongest cheap baseline, with its
+    # uncertainty, not the level.  Resample whole region groups.
+    reference = "kmer_delta"
+    base_rho = out[reference]["spearman"]
+    out["margin_over_kmer_delta"] = {
+        name: {"margin": out[name]["spearman"] - base_rho,
+               "interval": [float(v) for v in
+                            paired_interval(fitted[name], fitted[reference], y, groups)]}
+        for name in fitted if name != reference}
     return out
 
 
