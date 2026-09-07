@@ -25,7 +25,7 @@ MULTIPLE = 128
 def find_layers(model):
     """Find the repeated user-facing transformer layers by module name."""
     patterns = (
-        re.compile(r"^(.*(?:^|\.)(?:layers|blocks|h))\.(\d+)$"),
+        re.compile(r"^(.*(?:^|\.)(?:transformer_blocks|layers|blocks|h))\.(\d+)$"),
         re.compile(r"^(.*\.encoder\.layer)\.(\d+)$"),
     )
     candidates = {}
