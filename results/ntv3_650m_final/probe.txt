@@ -6,3 +6,7 @@ DNA word counts (84 features)     +0.4560   1.4618
 NTv3 hidden layer (probe)         +0.4403   1.3869
 NTv3 hidden layer + word counts   +0.4653   1.3625
 predict the mean                  +0.0000   1.7194
+
+noise floor from 20 label permutations: -0.0018 +/- 0.0702
+probe minus word counts: -0.0157  95% interval [-0.0477, +0.0153]
+Not distinguishable from word counts on this evidence.
