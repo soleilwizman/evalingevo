@@ -1,0 +1,20 @@
+{
+  "backend": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_650M_pre",
+  "revision": "main",
+  "contrast": "A+B-WT-AB (expected additive minus observed double)",
+  "score": "mean(forward,RC) of summed masked-LM pseudo-log-likelihood over the real bases; one mask per position; N-padded to a multiple of 128; FP32 log-softmax; FP64 sum",
+  "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
+  "code_sha256": "16f08e6b6028ca79040b84ae7fa77b3e1f288c433776aa9053352d4b1e24fa5f",
+  "batch_size": 1,
+  "bfloat16": false,
+  "limit": null,
+  "python": "3.12.3",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "packages": {
+    "numpy": "2.5.3",
+    "pandas": "3.0.5",
+    "torch": "2.14.0",
+    "transformers": "5.16.1"
+  }
+}
