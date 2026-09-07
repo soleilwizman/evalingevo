@@ -31,17 +31,6 @@ def token_offset(tokenizer, multiple=MULTIPLE):
     raise ValueError(f"cannot align tokens to bases: {len(ids)} ids for {len(probe_seq)} bases")
 
 
-def block_hidden_states(output):
-    """Read the hidden-state tensor returned by an NTv3 transformer block."""
-    if hasattr(output, "hidden_states"):
-        output = output.hidden_states
-    elif hasattr(output, "__contains__") and "hidden_states" in output:
-        output = output["hidden_states"]
-    if hasattr(output, "ndim") and output.ndim == 3:
-        return output
-    raise ValueError("NTv3 transformer block did not return a 3D hidden_states tensor")
-
-
 def embed(out, layer=11, checkpoint=DEFAULT_CHECKPOINT, revision="main",
           pred=PRED, audit=AUDIT, batch_size=8):
     import torch
@@ -64,18 +53,20 @@ def embed(out, layer=11, checkpoint=DEFAULT_CHECKPOINT, revision="main",
     if not 0 <= layer < len(blocks):
         raise ValueError(f"layer must be between 0 and {len(blocks) - 1}")
     block = blocks[layer]
+    representation = f"core.transformer_blocks.{layer}.final_layer_norm"
+    layer_norm = block.final_layer_norm
     captured = {}
 
     def capture(_module, _inputs, output):
-        captured["hidden_states"] = block_hidden_states(output)
+        captured["hidden_states"] = output
 
-    hook = block.register_forward_hook(capture)
+    hook = layer_norm.register_forward_hook(capture)
 
     sequences = el.seq.tolist()
     length = len(sequences[0])
     padded, left = pad_to_multiple(sequences[0])
     print(f"{len(sequences)} elements, {length} bp padded to {len(padded)}, "
-            f"pooling core.transformer_blocks.{layer} on {device}")
+          f"pooling {representation} on {device}")
 
     mean_rows, last_rows = [], []
     for start in range(0, len(sequences), batch_size):
@@ -101,7 +92,7 @@ def embed(out, layer=11, checkpoint=DEFAULT_CHECKPOINT, revision="main",
     el.drop(columns=["seq"]).to_csv(out / "elements.csv", index=False)
     (out / "meta.json").write_text(json.dumps(
          {"model": "ntv3", "checkpoint": checkpoint, "revision": revision,
-         "layer": f"core.transformer_blocks.{layer}", "width": int(matrices["mean"].shape[1]),
+         "layer": representation, "width": int(matrices["mean"].shape[1]),
          "n": int(len(el)), "padded_length": len(padded)}, indent=2) + "\n")
     print(f"wrote {out}/X_mean.npy and X_last.npy, width {matrices['mean'].shape[1]}")
 
