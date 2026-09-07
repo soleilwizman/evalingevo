@@ -31,7 +31,18 @@ def token_offset(tokenizer, multiple=MULTIPLE):
     raise ValueError(f"cannot align tokens to bases: {len(ids)} ids for {len(probe_seq)} bases")
 
 
-def embed(out, layer=-4, checkpoint=DEFAULT_CHECKPOINT, revision="main",
+def block_hidden_states(output):
+    """Read the hidden-state tensor returned by an NTv3 transformer block."""
+    if hasattr(output, "hidden_states"):
+        output = output.hidden_states
+    elif hasattr(output, "__contains__") and "hidden_states" in output:
+        output = output["hidden_states"]
+    if hasattr(output, "ndim") and output.ndim == 3:
+        return output
+    raise ValueError("NTv3 transformer block did not return a 3D hidden_states tensor")
+
+
+def embed(out, layer=11, checkpoint=DEFAULT_CHECKPOINT, revision="main",
           pred=PRED, audit=AUDIT, batch_size=8):
     import torch
     from transformers import AutoModelForMaskedLM, AutoTokenizer
@@ -47,14 +58,24 @@ def embed(out, layer=-4, checkpoint=DEFAULT_CHECKPOINT, revision="main",
     model = AutoModelForMaskedLM.from_pretrained(checkpoint, **kwargs).float()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     model.eval().to(device)
-    offset = token_offset(tokenizer)
+    if not hasattr(model, "core") or not hasattr(model.core, "transformer_blocks"):
+        raise ValueError("checkpoint does not expose core.transformer_blocks")
+    blocks = model.core.transformer_blocks
+    if not 0 <= layer < len(blocks):
+        raise ValueError(f"layer must be between 0 and {len(blocks) - 1}")
+    block = blocks[layer]
+    captured = {}
+
+    def capture(_module, _inputs, output):
+        captured["hidden_states"] = block_hidden_states(output)
+
+    hook = block.register_forward_hook(capture)
 
     sequences = el.seq.tolist()
     length = len(sequences[0])
     padded, left = pad_to_multiple(sequences[0])
-    span = slice(offset + left, offset + left + length)
     print(f"{len(sequences)} elements, {length} bp padded to {len(padded)}, "
-          f"pooling token positions {span.start}:{span.stop} on {device}")
+            f"pooling core.transformer_blocks.{layer} on {device}")
 
     mean_rows, last_rows = [], []
     for start in range(0, len(sequences), batch_size):
@@ -62,25 +83,25 @@ def embed(out, layer=-4, checkpoint=DEFAULT_CHECKPOINT, revision="main",
         ids = torch.tensor([tokenizer(pad_to_multiple(s)[0],
                                       add_special_tokens=True)["input_ids"] for s in batch],
                            dtype=torch.long, device=device)
-        recovered = "".join(tokenizer.convert_ids_to_tokens(ids[0, span].tolist()))
-        if recovered != batch[0]:
-            raise ValueError("token alignment is wrong: the pooled positions do not "
-                             f"decode back to the input ({recovered[:20]} vs {batch[0][:20]})")
         with torch.inference_mode():
-            hidden = model(input_ids=ids, output_hidden_states=True).hidden_states[layer]
-        real = hidden[:, span].float()
+            model(input_ids=ids)
+        hidden = captured.pop("hidden_states")
+        real = hidden.float()
+        if not torch.isfinite(real).all():
+            raise ValueError(f"core.transformer_blocks.{layer} produced non-finite activations")
         mean_rows.append(real.mean(1).cpu().numpy())
         last_rows.append(real[:, -1].cpu().numpy())
         if start % (batch_size * 25) == 0:
             print(f"  {start}/{len(sequences)}", flush=True)
 
+    hook.remove()
     matrices = {"mean": np.concatenate(mean_rows), "last": np.concatenate(last_rows)}
     for name, matrix in matrices.items():
         np.save(out / f"X_{name}.npy", matrix)
     el.drop(columns=["seq"]).to_csv(out / "elements.csv", index=False)
     (out / "meta.json").write_text(json.dumps(
-        {"model": "ntv3", "checkpoint": checkpoint, "revision": revision,
-         "layer": f"hidden_states[{layer}]", "width": int(matrices["mean"].shape[1]),
+         {"model": "ntv3", "checkpoint": checkpoint, "revision": revision,
+         "layer": f"core.transformer_blocks.{layer}", "width": int(matrices["mean"].shape[1]),
          "n": int(len(el)), "padded_length": len(padded)}, indent=2) + "\n")
     print(f"wrote {out}/X_mean.npy and X_last.npy, width {matrices['mean'].shape[1]}")
 
@@ -143,8 +164,8 @@ def main():
 
     e = sub.add_parser("embed", help="GPU. Pool one hidden layer per element.")
     e.add_argument("--out", default="results/ntv3_probe")
-    e.add_argument("--layer", type=int, default=-4,
-                   help="index into hidden_states, counted from the output (default -4)")
+    e.add_argument("--layer", type=int, default=11,
+                   help="actual NTv3 transformer block index (default 11)")
     e.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     e.add_argument("--revision", default="main")
     e.add_argument("--batch-size", type=int, default=8)
