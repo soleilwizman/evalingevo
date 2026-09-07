@@ -24,7 +24,7 @@ We can examine a small, fixed set of layers and positions at or downstream of th
 The project should yield a reproducible Python pipeline for computing experimental and Evo-derived epistasis, benchmark metrics comparing Evo 2 interaction scores to measured MPRA interactions, baseline comparisons against zero-interaction, distance-based, and simple regression models, and a short mechanistic case study of several Evo successes and failures.
 
 (3) MVP
-We selected one cell type (K562) and one library in the dataset. After filtering, there were 2833 quartet groups where all four sequences were present and both variants were single-base substitutions. Every variant sequence had to have at least 20 mean DNA counts and SE of 0.5 or less (one could also weigh each pair by 1/(SE^2) for the log2 RNA/DNA activity measurement. The 2,833 pairs fall into 2,251 groups of overlapping genomic regions, accounted for in cross-validation. Siraj et al. assayed each pair in up to six overlapping 200-base windows that shift the variants' position within the oligo – for each quartet, we selected the “middle” window, in which the first variant of the pair sits at position 100, and the second variant within 100bp up or downstream. 
+We selected one cell type (K562). The retained set spans eight libraries (OL41 1838, OL27 202, OL31 184, OL28 179, OL29 160, OL30 159, OL32 75, OL33 36); the lexicographically-first rule is a per-pair dedup, not a filter to a single library. After filtering, there were 2833 quartet groups where all four sequences were present and both variants were single-base substitutions. Every variant sequence had to have at least 20 mean DNA counts and SE of 0.5 or less (one could also weigh each pair by 1/(SE^2) for the log2 RNA/DNA activity measurement. The 2,833 pairs fall into 2,251 groups of overlapping genomic regions, accounted for in cross-validation. Siraj et al. assayed each pair in up to six overlapping 200-base windows that shift the variants' position within the oligo – for each quartet, we selected the “middle” window, in which the first variant of the pair sits at position 100, and the second variant within 100bp up or downstream. 
 
 Using the frozen evo2_7b_base checkpoint, we could evaluate for each quartet (1) Evo sequence score S (s(A) + s(B) − s(WT) - s(AB)) and (2) experimental activity scoring (ε = y(A) + y(B) − y(WT) - y(AB)). We ran a Spearman correlation between the ranking of Evo interaction m and the ranking of measured experimental interaction epsilon across the 2,833 pairs; for uncertainty, we resampled overlapping-region groups 1,000 times and recalculated the statistical measures seen in the figures. 
 
@@ -33,33 +33,75 @@ Because Evo log-likelihood units and MPRA log2-activity units differ, a supervis
 Separately, we ran a supervised ridge regression model using only sequence features: counts of DNA words of lengths one, two, and three in each quartet member, plus variant positions and separation distance.
 
 (4) Preliminary results
-Measured experimental activity variance is 0.12514, and the average squared measurement standard error is 0.08937.
 
-Spearman of Evo score versus measured experimental activity
-0.0176
- 95% interval -0.0210 to 0.0533
-Almost no rank association
-Pearson correlation of Evo score versus measured experimental activity
-0.0011
- 95% interval -0.0384 to 0.0414
-Almost no linear association
-RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured experimental activity
-RMSE 0.35427
-Measurement of how close are Evo-based numerical predictions are to experimental reality
-RMSE of training-fold mean reference versus measured experimental activity
-RMSE 0.35391
-.
-RMSE of zero prediction versus measured experimental activity (Predicted score = 0 for every pair; additive assumption)
-RMSE 0.35376
-Simple reference prediction
-RMSE of sequence-based ridge regression model versus measured experimental activity
-RMSE 0.37337
-Simple reference prediction
+All numbers below are reproduced by `python3 analysis_section4.py`, which reads only the
+shipped `results/evo2_7b_base/predictions.csv` and `data/audit.csv.gz`. No GPU, no downloads.
 
-Note: While activity (the measured output) is not 1:1 comparable with Evo’s predicted “naturalness” score, an enhancer's only job is turning genes on. So, to an extent, in this case, "does this variant matter" and "does it change how much the gene turns on" are the same question. 
+Reproduction check. Siraj et al. recode alleles lowest-to-highest activity and use the
+lowest-activity diplotype as the reference category. Because the four diplotypes pair into
+complements, this can only flip the sign of the second difference; magnitude never changes,
+so nothing else in the pipeline moves. Among the 58 pairs carrying the paper's interaction
+flag, 46.6% are dampening under our original ref/alt coding, a coin flip. Recoded, 86.2% of
+those same 58 are dampening, against the paper's 139/180 = 77.2%. Over all 2,833 pairs the
+recoded figure is 75.9%. The argument is the shift from a coin flip to a strong skew, not
+decimal agreement, since the denominators differ. The identical per-pair flip is applied to
+the Evo contrast, so both sides stay on one convention.
 
+Evo does not order single-variant effects. Stacking the A-only and B-only measurements gives
+5,666 single-variant observations within elements. Ranking the absolute change in Evo's score
+against the absolute measured effect gives Spearman -0.006, cluster-bootstrap 95% CI -0.034
+to +0.022. The join is intact: Evo single-variant score changes have SD 2.59 against a
+whole-sequence score SD of 46.5, where a scrambled join would give roughly 66.
 
-Across all 2,833 pairs, the calibrated Evo prediction was slightly less accurate than predicting zero. Calibrated Evo has RMSE 0.35427, while the zero-interaction reference has RMSE 0.35376. The difference is 0.00051 log2-activity units, with Evo slightly worse. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured epsilon is 0.12514, and the mean squared standard error is 0.08937. 
+Nor whole elements, where a base count does. Across the 2,595 distinct reference 200-mers,
+Evo's whole-sequence log-likelihood against measured reference activity gives Spearman -0.019
+(CI -0.060 to +0.025), and +0.014 on active elements only. Counting G and C in the same 200
+bases gives +0.328. Under an identical grouped five-fold out-of-fold protocol, so that a
+correlated feature and a zero-shot likelihood are compared fairly, GC reaches +0.327 (RMSE
+1.609) and calibrated Evo +0.016 (RMSE 1.713) against 1.720 for predicting the training mean.
+Counts of 1, 2 and 3-mers reach +0.458, so the honest baseline is nearer 0.46 than 0.33. Evo's
+likelihood correlates with GC at only +0.035, so it is not representing the trivial feature it
+loses to. Caveat: GC-rich elements skew promoter and CpG-island-like and are genuinely more
+active, and log2(RNA/DNA) cancels most but not all composition bias. A legitimate baseline,
+not a claim about mechanism.
+
+The interaction result, against its ceiling. Each pair's interaction estimate carries a
+standard error. Var(epsilon) is 0.125 and mean SE^2 is 0.089, so reliability is 0.286: roughly
+71% of the spread is assay noise and no predictor can exceed a Pearson correlation of 0.535
+here. Evo gets Pearson 0.003 and Spearman 0.021 (CI -0.019 to 0.059). Correcting for
+attenuation bounds the true correlation below about 0.11.
+
+Detection, and the bar that matters. Of the 2,833 pairs, 58 carry the interaction emVar flag.
+
+| Ranking score                       | AUROC |
+|-------------------------------------|-------|
+| Measured single-variant effect size | 0.777 |
+| Evo interaction score, absolute     | 0.569 |
+| Closeness (negative distance in bp) | 0.567 |
+| GC content                          | 0.469 |
+
+A grouped five-fold out-of-fold logistic regression on distance, single-effect size and GC
+reaches 0.744. Adding the Evo interaction score gives 0.742, a change of -0.002 with a
+group-bootstrap interval of -0.004 to -0.0003. Evo's interaction score carries about what the
+distance between the two variants carries, and nothing beyond three covariates that need no
+model.
+
+Removing label noise does not help. Taking nested subsets by measurement precision, the
+ceiling rises from 0.535 (n=2,833) to 0.661 (n=2,125), 0.724 (n=1,417) and 0.748 (n=709),
+while Evo's correlation runs +0.021, +0.032, +0.039, -0.026. Disattenuated those are 0.038,
+0.048, 0.053 and -0.034: noise centred on zero, wandering in both directions, with no trend
+toward the rising ceiling. A predictor with any signal improves as noise is removed.
+
+On RMSE, which an earlier version of this README reported as a ranking and which is withdrawn
+as one. Predicting zero gives 0.354, mechanically the standard deviation of the outcome. A
+predictor limited only by measurement error would reach 0.299. The entire competitive range is
+0.055 wide and the spread across all models here is 0.0005, about 1% of it. Calibrated Evo is
+0.305 against 0.305 for the training-fold mean, with the bootstrap interval on that gap
+entirely on the wrong side. After recoding, epsilon is about 76% positive, so the relevant null
+is the training mean rather than zero and raw sign accuracy is uninformative: calibrated Evo,
+the training mean and the training median all score 0.904 while balanced sign accuracy is
+exactly 0.500 for each.
+
 
 (5) Next Steps
 
