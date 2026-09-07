@@ -57,6 +57,10 @@ def find_layers(model):
 
 def tensor_output(output, name):
     """Extract a batch-first hidden-state tensor from a module output."""
+    if hasattr(output, "hidden_states"):
+        output = output.hidden_states
+    elif hasattr(output, "__contains__") and "hidden_states" in output:
+        output = output["hidden_states"]
     tensors = []
 
     def visit(value):
@@ -88,6 +92,8 @@ def main():
     ap.add_argument("--revision", default="main")
     ap.add_argument("--out", default="results/ntv3_sweep")
     ap.add_argument("--pooling", choices=("mean", "last"), default="mean")
+    ap.add_argument("--layer", type=int, default=None,
+                    help="capture only this transformer layer (for example, 11)")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--folds", type=int, default=5)
     args = ap.parse_args()
@@ -102,7 +108,16 @@ def main():
     model = AutoModelForMaskedLM.from_pretrained(args.checkpoint, **kw).float()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     model.eval().to(device)
-    named_layers = find_layers(model)
+    all_named_layers = find_layers(model)
+    if args.layer is None:
+        layer_indices = list(range(len(all_named_layers)))
+        named_layers = all_named_layers
+    else:
+        if not 0 <= args.layer < len(all_named_layers):
+            raise SystemExit(f"--layer must be between 0 and {len(all_named_layers) - 1}")
+        layer_indices = [args.layer]
+        named_layers = [all_named_layers[args.layer]]
+        print(f"capturing only transformer layer {args.layer}", flush=True)
 
     # where sequence tokens start, so pooling covers the real bases only
     probe_seq = "ACGT" * (MULTIPLE // 4)
@@ -124,7 +139,7 @@ def main():
     print(f"{len(seqs)} elements, {length} bp padded to {target}, "
           f"pooling {span.start}:{span.stop} on {device}", flush=True)
 
-    chunks = {i: [] for i in range(len(named_layers))}
+    chunks = {i: [] for i in layer_indices}
     captured = {}
 
     def capture(index, name):
@@ -133,7 +148,7 @@ def main():
         return hook
 
     hooks = [module.register_forward_hook(capture(i, name))
-             for i, (name, module) in enumerate(named_layers)]
+             for i, (name, module) in zip(layer_indices, named_layers)]
     for start in range(0, len(seqs), args.batch_size):
         batch = seqs[start:start + args.batch_size]
         ids = torch.tensor([tok(pad(s), add_special_tokens=True)["input_ids"] for s in batch],
@@ -144,10 +159,10 @@ def main():
         captured.clear()
         with torch.inference_mode():
             model(input_ids=ids)
-        if len(captured) != len(named_layers):
-            missing = sorted(set(range(len(named_layers))) - set(captured))
+        if len(captured) != len(layer_indices):
+            missing = sorted(set(layer_indices) - set(captured))
             raise RuntimeError(f"named layer hooks did not fire: {missing}")
-        for i, (name, _) in enumerate(named_layers):
+        for i, (name, _) in zip(layer_indices, named_layers):
             state = captured[i]
             if state.shape[0] != len(batch):
                 raise RuntimeError(f"layer {name} is not batch-first: {tuple(state.shape)}")
@@ -171,6 +186,7 @@ def main():
     (out / "meta.json").write_text(json.dumps(
         {"checkpoint": args.checkpoint, "pooling": args.pooling, "layers": layers,
          "layer_names": [name for name, _ in named_layers],
+         "selected_layer": args.layer,
          "width": int(np.concatenate(chunks[layers[-1]]).shape[1]), "n": len(el)},
         indent=2) + "\n")
 
