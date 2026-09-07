@@ -1,0 +1,248 @@
+{
+  "label": "NTv3 100M pre",
+  "contrast": "A+B-WT-AB (expected additive minus observed double)",
+  "pairs": 2833,
+  "groups": 2251,
+  "raw": {
+    "n": 2833,
+    "spearman": 0.01263021369730714,
+    "pearson": -0.017095859782536586,
+    "n_sign": 1020,
+    "sign_accuracy": 0.5058823529411764,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5047069518057439
+  },
+  "raw_all_nonzero_signs": {
+    "n": 2833,
+    "spearman": 0.01263021369730714,
+    "pearson": -0.017095859782536586,
+    "n_sign": 2833,
+    "sign_accuracy": 0.5142957995058243,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5146612795606802
+  },
+  "predictions": {
+    "calibrated_model": {
+      "n": 2833,
+      "spearman": -0.03316934279246309,
+      "pearson": -0.00927327432544545,
+      "n_sign": 1020,
+      "sign_accuracy": 0.47549019607843135,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.4671823000123259,
+      "rmse": 0.3539326080143791,
+      "mae": 0.248782827482997
+    },
+    "additive_zero": {
+      "n": 2833,
+      "spearman": null,
+      "pearson": null,
+      "n_sign": 1020,
+      "sign_accuracy": 0.0,
+      "sign_coverage": 0.0,
+      "balanced_sign_accuracy": 0.0,
+      "rmse": 0.3537617081680275,
+      "mae": 0.24849778276753393
+    },
+    "training_mean": {
+      "n": 2833,
+      "spearman": -0.04055478063133629,
+      "pearson": -0.039228870211268155,
+      "n_sign": 1020,
+      "sign_accuracy": 0.49901960784313726,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.48626432885492415,
+      "rmse": 0.3539094095993812,
+      "mae": 0.24866342245677675
+    },
+    "training_median": {
+      "n": 2833,
+      "spearman": -0.038235639389464275,
+      "pearson": -0.03146558077446153,
+      "n_sign": 1020,
+      "sign_accuracy": 0.47843137254901963,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.5,
+      "rmse": 0.35390964391002555,
+      "mae": 0.24853637060883252
+    },
+    "sequence_only_kmer_ridge": {
+      "n": 2833,
+      "spearman": -0.03599213200231597,
+      "pearson": -0.035387605718227744,
+      "n_sign": 1020,
+      "sign_accuracy": 0.4852941176470588,
+      "sign_coverage": 1.0,
+      "balanced_sign_accuracy": 0.4840379637618637,
+      "rmse": 0.37336963141804363,
+      "mae": 0.26829877043354367
+    }
+  },
+  "majority_sign": {
+    "n": 2833,
+    "spearman": null,
+    "pearson": null,
+    "n_sign": 1020,
+    "sign_accuracy": 0.47843137254901963,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.5
+  },
+  "calibration": [
+    {
+      "fold": 0,
+      "intercept": -0.005072468219234385,
+      "slope": -0.005100771959974421
+    },
+    {
+      "fold": 1,
+      "intercept": -0.005322317845513224,
+      "slope": -0.005106900772457935
+    },
+    {
+      "fold": 2,
+      "intercept": -0.004197116142863028,
+      "slope": -0.004051409945290425
+    },
+    {
+      "fold": 3,
+      "intercept": 0.0036381438302635176,
+      "slope": -0.006258855492312402
+    },
+    {
+      "fold": 4,
+      "intercept": -0.0001734751558708364,
+      "slope": -0.001337915803661728
+    }
+  ],
+  "cluster_bootstrap_95ci": {
+    "spearman": [
+      -0.025840640597736133,
+      0.04771584296351797
+    ],
+    "pearson": [
+      -0.054698215704159836,
+      0.022033013961602083
+    ],
+    "rmse_gain_zero": [
+      -0.00045266724058274364,
+      9.709534005314511e-05
+    ],
+    "rmse_gain_mean": [
+      -0.0002517129017400588,
+      0.00021193356674990694
+    ],
+    "rmse_gain_sequence": [
+      0.015398075042305889,
+      0.02356395784448819
+    ]
+  },
+  "strata": [
+    {
+      "stratification": "distance",
+      "bin": "(0.0, 10.0]",
+      "n": 445,
+      "mae": 0.2597609205524151,
+      "spearman": -0.06184595942745789,
+      "pearson": -0.09157604937682706
+    },
+    {
+      "stratification": "distance",
+      "bin": "(10.0, 25.0]",
+      "n": 490,
+      "mae": 0.25305974806477094,
+      "spearman": 0.03710392932303181,
+      "pearson": 0.030113659323463784
+    },
+    {
+      "stratification": "distance",
+      "bin": "(25.0, 50.0]",
+      "n": 759,
+      "mae": 0.23124294815956922,
+      "spearman": 0.0004984211130096666,
+      "pearson": -0.023760761714989826
+    },
+    {
+      "stratification": "distance",
+      "bin": "(50.0, 100.0]",
+      "n": 1139,
+      "mae": 0.25434193714543896,
+      "spearman": 0.04549919849624756,
+      "pearson": 0.025967745768976508
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(-0.001, 0.25]",
+      "n": 1813,
+      "mae": 0.11487682560310174,
+      "spearman": 0.026488024365356043,
+      "pearson": 0.022600413635203622
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(0.25, 0.5]",
+      "n": 698,
+      "mae": 0.3497119449326212,
+      "spearman": -0.0016782364513578288,
+      "pearson": -0.02498882326809952
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(0.5, 1.0]",
+      "n": 265,
+      "mae": 0.6699176470400724,
+      "spearman": 0.0196997639897342,
+      "pearson": 0.03290002730600175
+    },
+    {
+      "stratification": "|epistasis|",
+      "bin": "(1.0, inf]",
+      "n": 57,
+      "mae": 1.3140868668827752,
+      "spearman": -0.26030593725693546,
+      "pearson": -0.27785996221944936
+    }
+  ],
+  "settings": {
+    "folds": 5,
+    "seed": 0,
+    "bootstrap": 1000,
+    "sign_threshold": 0.25
+  },
+  "inputs": {
+    "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
+    "scores_sha256": "8139e79407f00948ebdb7ad8a9670f3100f58269eb085774c57871571fdc728a"
+  },
+  "noise_ceiling": {
+    "n": 2833,
+    "epsilon_variance_population": 0.12514382771075644,
+    "mean_epsilon_se_squared": 0.08936706259774096,
+    "estimated_signal_variance": 0.035776765113015474,
+    "reliability_raw": 0.2858851752217929,
+    "reliability": 0.2858851752217929,
+    "perfect_predictor_observed_correlation_ceiling": 0.5346823124265407,
+    "distinguishable_n_abs_epsilon_ge_z_se": 256,
+    "distinguishable_fraction_abs_epsilon_ge_z_se": 0.09036357218496294,
+    "significance_z": 1.96,
+    "assumption": "classical independent measurement error; diagnostic estimate",
+    "spearman_reliability_adjusted_95ci_approx": [
+      -0.04832896094965988,
+      0.08924148387660305
+    ],
+    "spearman_upper_95_reliability_adjusted_approx": 0.08924148387660305,
+    "pearson_reliability_adjusted_95ci": [
+      -0.10230040237524174,
+      0.041207673135118285
+    ],
+    "pearson_upper_95_reliability_adjusted": 0.041207673135118285,
+    "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation."
+  },
+  "exploratory_source_SE_subset": {
+    "n": 256,
+    "spearman": -0.035185397116044854,
+    "pearson": -0.09819693105878455,
+    "n_sign": 251,
+    "sign_accuracy": 0.5059760956175299,
+    "sign_coverage": 1.0,
+    "balanced_sign_accuracy": 0.49846547314578005
+  }
+}
