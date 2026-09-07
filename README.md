@@ -48,37 +48,21 @@ First, Evo does not rank single-variant effects. Each quartet contains two singl
 Notably, as Evo 2 is autoregressive, we repeated everything with Nucleotide Transformer v3, the masked language model also pretrained on OpenGenome2. To score, we masked one base at a time and added the log probability of the base that is actually there, across all 200 positions, averaged over forward and reverse-complement, just as was done on Evo. Comparing predicted score to measured experimental sequence activity, Evo 2's log-likelihood correlates with measured reference activity at Spearman -0.019, cluster-bootstrap interval -0.060 to +0.025, while NTv3 gives -0.088, interval -0.130 to -0.043; indistinguishable. On single variants, Spearman -0.005 (CI -0.034 to +0.022) against Evo's -0.006. On variant interaction, Evo 2 gives Spearman +0.021 (interval -0.019 to +0.059) and NTv3 +0.021 (-0.017 to +0.059). NTv3's U-Net requires a sequence length divisible by 128, so each oligo was padded symmetrically to 256 with N, and only the 200 real positions were scored. 
 Measured experimental activity variance is 0.12514, and the average squared measurement standard error is 0.08937.
 
-On epistasis:
-Comparison
+On epistasis (recoded contrast, results/evo2_7b_base/metrics.json):
 
-
-Result
-
-
-Comments
-Spearman's rank correlation of Evo score versus measured experimental activity
-0.0176
- 95% interval -0.0210 to 0.0533
-Almost no rank association
-Pearson correlation of Evo score versus measured experimental activity
-0.0011
- 95% interval -0.0384 to 0.0414
-Almost no linear association
-RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured experimental activity
-RMSE 0.35427
-Measurement of how close Evo-based numerical predictions are to experimental reality
-RMSE of training-fold mean reference versus measured experimental activity
-RMSE 0.35391
-Another prediction
-RMSE of zero prediction versus measured experimental activity (Predicted score = 0 for every pair; additive assumption)
-RMSE 0.35376
-Simple reference prediction
+| Comparison | Result | Comments |
+|---|---|---|
+| Spearman's rank correlation of Evo score versus measured experimental activity | 0.0205 (95% interval -0.0190 to +0.0589) | Almost no rank association |
+| Pearson correlation of Evo score versus measured experimental activity | 0.0030 (95% interval -0.0366 to +0.0409) | Almost no linear association |
+| RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured experimental activity | RMSE 0.30498 | Measurement of how close Evo-based numerical predictions are to experimental reality |
+| RMSE of training-fold mean reference versus measured experimental activity | RMSE 0.30478 | The reference to beat; paired bootstrap interval for calibrated Evo minus this is -0.00042 to -0.00002 |
+| RMSE of zero prediction versus measured experimental activity (Predicted score = 0 for every pair; additive assumption) | RMSE 0.35376 | Simple reference prediction; biased under recoding, because recoded epsilon has mean +0.180 |
 
 Note: While activity (the measured output) is not 1:1 comparable with Evo’s predicted “naturalness” score, an enhancer's only job is turning genes on. So, to an extent, in this case, "does this variant matter" and "does it change how much the gene turns on" are the same question. 
 
 
 
-Int_emVar is the source dataset’s Boolean flag for an interaction expression-modulating variant pair. After quality control, reducing the dataset to 2833 pairs, 58 were flagged as statistically significantly nonadditive (2.05%). Across all 2,833 pairs, the calibrated Evo prediction was slightly less accurate than predicting zero. Calibrated Evo has RMSE 0.35427, while the zero-interaction reference has RMSE 0.35376, indicating that under these MVP conditions, Evo’s score adds essentially no predictive information beyond a trivial baseline, consistent with the near-zero correlation between Evo’s interaction score and measured epistasis, and reports from other evaluators of Evo2 on this metric. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured experimental activity is 0.12514, and the mean squared standard error is 0.08937. Error increases for larger measured epistasis values, meaning Evo particularly fails on the biologically interesting, strongly non-additive cases identified by Siraj et al. Notably, the full-dataset RMSE is dominated by the large number of small-effect pairs, while the strongly non-additive pairs are both rare and noisy, but the overall conclusion remains supported by the near-zero correlation and lack of improvement over the additive baseline; performance specifically on Siraj’s identified non-additive subset remains to be established. 
+Int_emVar is the source dataset’s Boolean flag for an interaction expression-modulating variant pair. After quality control, reducing the dataset to 2833 pairs, 58 were flagged as statistically significantly nonadditive (2.05%). Across all 2,833 pairs, the calibrated Evo prediction was indistinguishable from predicting the training-fold mean. Calibrated Evo has RMSE 0.30498, the training-fold mean has RMSE 0.30478, and the zero-interaction reference has RMSE 0.35376. Both constant baselines beat zero only because the recoded epsilon is mostly positive (mean +0.180, 75.9% of pairs interfering), so the intercept, not Evo's score, accounts for the gain over zero, indicating that under these MVP conditions, Evo’s score adds essentially no predictive information beyond a trivial baseline, consistent with the near-zero correlation between Evo’s interaction score and measured epistasis, and reports from other evaluators of Evo2 on this metric. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured experimental activity is 0.12514, and the mean squared standard error is 0.08937. Error increases for larger measured epistasis values, meaning Evo particularly fails on the biologically interesting, strongly non-additive cases identified by Siraj et al. Notably, the full-dataset RMSE is dominated by the large number of small-effect pairs, while the strongly non-additive pairs are both rare and noisy, but the overall conclusion remains supported by the near-zero correlation and lack of improvement over the training-mean baseline; performance specifically on Siraj’s identified non-additive subset remains to be established. 
 
 
 (5) Some Next Steps
