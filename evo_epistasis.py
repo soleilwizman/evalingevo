@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, RidgeCV
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -384,6 +384,7 @@ def add_predictions(quartets, scores, folds=5, seed=0):
     if not np.isfinite(df[[f"s_{s}" for s in STATES]].to_numpy()).all():
         raise ValueError("Missing or nonfinite sequence score")
     df["model_interaction"] = df.s_a + df.s_b - df.s_wt - df.s_ab
+    df = add_flip(df)
     if not 2 <= folds <= df.group_id.nunique():
         raise ValueError("Invalid grouped-fold count")
     y = df.epsilon.to_numpy()
@@ -469,7 +470,273 @@ def make_plot(df, path, label):
     return strata
 
 
-def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_boot=1000, threshold=0.25):
+# --------------------------------------------------------------- recoding
+
+def add_flip(df):
+    """Apply the paper's allele recoding to the measured and model contrasts.
+
+    Siraj et al. recode alleles lowest-to-highest activity and treat the
+    lowest-activity diplotype as the reference category.  The four diplotypes
+    pair into complements (wt<->ab, a<->b), so this can only flip the sign of
+    the second difference; magnitude is untouched.  The identical per-pair flip
+    is applied to the model contrast, since flipping the measurement alone
+    would impose a random per-pair sign and destroy the comparison.
+    ``epsilon_refalt`` keeps the original ref/alt contrast, which is what the
+    noise ceiling is estimated on.
+    """
+    y = df[[f"y_{s}" for s in STATES]].to_numpy(float)
+    flip = np.where(np.isin(np.argmin(y, axis=1), (0, 3)), 1.0, -1.0)
+    df = df.copy()
+    df["flip"] = flip
+    df["epsilon_refalt"] = df["epsilon"]
+    df["epsilon"] = flip * df["epsilon"]
+    df["model_interaction"] = flip * df["model_interaction"]
+    return df
+
+
+# -------------------------------------------------- analyses needing the audit
+
+def group_boot(groups, statistic, n_boot=1000, seed=0):
+    """Percentile interval resampling whole overlap groups."""
+    rng = np.random.default_rng(seed)
+    unique = np.asarray(pd.unique(groups))
+    index = {g: np.flatnonzero(groups == g) for g in unique}
+    values = []
+    for _ in range(n_boot):
+        picked = rng.choice(unique, size=len(unique), replace=True)
+        value = statistic(np.concatenate([index[g] for g in picked]))
+        if np.isfinite(value):
+            values.append(value)
+    return [float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))]
+
+
+def auroc(score, label):
+    score, label = np.asarray(score, float), np.asarray(label, bool)
+    ranks = pd.Series(score).rank().to_numpy()
+    positives, negatives = label.sum(), (~label).sum()
+    if positives == 0 or negatives == 0:
+        return float("nan")
+    return float((ranks[label].sum() - positives * (positives + 1) / 2) / (positives * negatives))
+
+
+def gc_fraction(sequences):
+    return np.array([(s.count("G") + s.count("C")) / len(s) for s in sequences])
+
+
+def element_kmers(sequences):
+    lookup = {k: i for i, k in enumerate(KMER_VOCAB)}
+    features = np.zeros((len(sequences), len(KMER_VOCAB)))
+    for row, sequence in enumerate(sequences):
+        for size in (1, 2, 3):
+            for start in range(len(sequence) - size + 1):
+                column = lookup.get(sequence[start:start + size])
+                if column is not None:
+                    features[row, column] += 1
+    return features
+
+
+def out_of_fold_linear(features, y, groups, folds=5, ridge=False, seed=0):
+    features = features.reshape(-1, 1) if features.ndim == 1 else features
+    prediction = np.empty(len(y))
+    for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=seed).split(features, y, groups):
+        model = make_pipeline(StandardScaler(),
+                              RidgeCV(alphas=np.logspace(-2, 5, 30)) if ridge else LinearRegression())
+        prediction[test] = model.fit(features[train], y[train]).predict(features[test])
+    return prediction
+
+
+def join_audit(df, audit_path):
+    audit = pd.read_csv(audit_path)
+    key = ["v1", "v2", "center_variant", "window", "library"]
+    if any(c not in audit.columns for c in key):
+        raise ValueError(f"audit is missing join columns: {[c for c in key if c not in audit.columns]}")
+    joined = audit[key[0]].astype(str)
+    for column in key[1:]:
+        joined = joined + ";" + audit[column].astype(str)
+    audit = audit.assign(_k=joined)
+    wanted = [c for c in ("_k", "refref_Log2FC", "refref_active", "int_emVar") if c in audit.columns]
+    merged = df.assign(_k=df.pair_id.str.split("|").str[0]).merge(
+        audit.drop_duplicates("_k")[wanted], on="_k", how="left")
+    if len(merged) != len(df):
+        raise ValueError("audit join changed the row count")
+    return merged
+
+
+def reproduction_check(df):
+    labelled = df[df.int_emVar == True]  # noqa: E712
+    return {"n_pairs": int(len(df)), "n_labelled": int(len(labelled)),
+            "flip_negative": int((df.flip < 0).sum()),
+            "dampening_labelled_refalt": float((labelled.epsilon_refalt > 0).mean()),
+            "dampening_labelled_recoded": float((labelled.epsilon > 0).mean()),
+            "dampening_all_recoded": float((df.epsilon > 0).mean()),
+            "paper_dampening_fraction": 139 / 180}
+
+
+def single_variant_report(df, n_boot=1000, seed=0):
+    measured = np.concatenate([df.y_a.to_numpy(float), df.y_b.to_numpy(float)])
+    model = np.concatenate([(df.s_a - df.s_wt).to_numpy(float), (df.s_b - df.s_wt).to_numpy(float)])
+    groups = np.concatenate([df.group_id.to_numpy(), df.group_id.to_numpy()])
+    interval = group_boot(groups, lambda i: spearmanr(np.abs(model[i]), np.abs(measured[i])).statistic,
+                          n_boot, seed)
+    return {"n": int(len(measured)),
+            "magnitude_spearman": float(spearmanr(np.abs(model), np.abs(measured)).statistic),
+            "magnitude_95ci": interval,
+            "signed_spearman": float(spearmanr(model, measured).statistic),
+            "sd_model_single_effect": float(np.std(model, ddof=1)),
+            "sd_whole_sequence_score": float(df.s_wt.std()),
+            "scrambled_join_would_give": float(df.s_wt.std() * np.sqrt(2))}
+
+
+def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=1000, seed=0):
+    """Element-level baselines: GC and k-mer counts against the model likelihood."""
+    figure, axes = plt.subplots(1, 4, figsize=(17, 4.2))
+    panels = ((gc, "GC fraction of the 200-mer", "GC content"),
+              (predictions["kmer_1_2_3"], "out-of-fold prediction", "1/2/3-mer counts"),
+              (model, "Evo 2 log-likelihood", "Evo 2 likelihood"))
+    for axis, (x, xlabel, title) in zip(axes, panels):
+        axis.scatter(x, y, s=6, alpha=0.25, linewidths=0, color="#3b6ea5")
+        axis.set_xlabel(xlabel)
+        axis.set_title(f"{title}\nSpearman {spearmanr(x, y).statistic:+.3f}")
+    axes[0].set_ylabel("measured reference activity (log2 RNA/DNA)")
+
+    order = ["kmer_1_2_3", "gc", "model"]
+    labels = ["1/2/3-mer\ncounts", "GC\ncontent", "Evo 2\nlikelihood"]
+    values, lows, highs = [], [], []
+    for name in order:
+        prediction = predictions[name]
+        rho = float(spearmanr(prediction, y).statistic)
+        low, high = group_boot(groups, lambda i: spearmanr(prediction[i], y[i]).statistic, n_boot, seed)
+        values.append(rho); lows.append(rho - low); highs.append(high - rho)
+    axes[3].bar(labels, values, color=["#2a7f62", "#3b6ea5", "#b4483c"], width=0.6)
+    axes[3].errorbar(labels, values, yerr=[lows, highs], fmt="none", ecolor="black", capsize=4, lw=1)
+    axes[3].axhline(0, color="black", lw=0.8)
+    for i, value in enumerate(values):
+        axes[3].text(i, value + highs[i] + 0.015, f"{value:+.3f}", ha="center", fontsize=9)
+    axes[3].set_ylabel("out-of-fold Spearman")
+    axes[3].set_title("grouped 5-fold, same protocol\nfor every row")
+    axes[3].set_ylim(min(0, min(values)) - 0.05, max(values) + 0.09)
+    for axis in axes:
+        axis.spines[["top", "right"]].set_visible(False)
+    figure.suptitle(f"Predicting enhancer activity from the same 200 bases (n = {len(y)} elements)", y=1.02)
+    figure.tight_layout()
+    figure.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(figure)
+    return str(path)
+
+
+def element_report(df, folds=5, n_boot=1000, seed=0, plot_path=None):
+    elements = (df.dropna(subset=["refref_Log2FC"]).drop_duplicates("seq_wt")
+                  [["seq_wt", "s_wt", "refref_Log2FC", "refref_active", "group_id"]].reset_index(drop=True))
+    if elements.groupby("seq_wt").group_id.nunique().gt(1).any():
+        raise ValueError("a reference sequence spans more than one cross-validation group")
+    y = elements.refref_Log2FC.to_numpy(float)
+    groups, model = elements.group_id.to_numpy(), elements.s_wt.to_numpy(float)
+    gc, kmers = gc_fraction(elements.seq_wt), element_kmers(elements.seq_wt)
+    active = elements.refref_active.astype(str).str.lower().isin(("true", "1")).to_numpy()
+    mean_prediction = np.empty(len(y))
+    for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=seed).split(y.reshape(-1, 1), y, groups):
+        mean_prediction[test] = y[train].mean()
+
+    def scored(prediction):
+        return {"spearman": float(spearmanr(prediction, y).statistic),
+                "rmse": float(np.sqrt(np.mean((y - prediction) ** 2)))}
+
+    fitted = {"gc": out_of_fold_linear(gc, y, groups, folds, seed=seed),
+              "model": out_of_fold_linear(model, y, groups, folds, seed=seed),
+              "kmer_1_2_3": out_of_fold_linear(kmers, y, groups, folds, ridge=True, seed=seed),
+              "training_mean": mean_prediction}
+    plot = make_element_plot(elements, y, gc, model, fitted, groups, plot_path, n_boot, seed) if plot_path else None
+
+    return {"n_elements": int(len(elements)), "n_active": int(active.sum()), "plot": plot,
+            "raw_spearman": {
+                "gc_vs_activity": float(spearmanr(gc, y).statistic),
+                "gc_95ci": group_boot(groups, lambda i: spearmanr(gc[i], y[i]).statistic, n_boot, seed),
+                "model_vs_activity": float(spearmanr(model, y).statistic),
+                "model_95ci": group_boot(groups, lambda i: spearmanr(model[i], y[i]).statistic, n_boot, seed),
+                "model_vs_activity_active_only": float(spearmanr(model[active], y[active]).statistic),
+                "model_vs_gc": float(spearmanr(model, gc).statistic)},
+            "out_of_fold": {name: scored(value) for name, value in fitted.items()}}
+
+
+def detection_report(df, folds=5, n_boot=1000, seed=0, n_seeds=20):
+    label = (df.int_emVar == True).to_numpy()  # noqa: E712
+    groups = df.group_id.to_numpy()
+    gc = gc_fraction(df.seq_wt)
+    single = (df.y_a.abs() + df.y_b.abs()).to_numpy(float)
+    closeness = -df.distance.to_numpy(float)
+    model = np.abs(df.model_interaction.to_numpy(float))
+
+    def out_of_fold_probability(features, split_seed=None):
+        probability = np.empty(len(label))
+        split_seed = seed if split_seed is None else split_seed
+        for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=split_seed).split(features, label, groups):
+            fitted = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
+            fitted.fit(features[train], label[train])
+            probability[test] = fitted.predict_proba(features[test])[:, 1]
+        return probability
+
+    covariates = np.column_stack([closeness, single, gc])
+    with_evo = np.column_stack([covariates, model])
+    without = out_of_fold_probability(covariates)
+    with_model = out_of_fold_probability(with_evo)
+
+    # The absolute AUROC moves by a few points with the fold draw, so the gain is
+    # re-estimated over several splits and reported with its spread.  The claim is
+    # the gain, not the level.
+    across = []
+    for other in range(n_seeds):
+        a = auroc(out_of_fold_probability(covariates, other), label)
+        b = auroc(out_of_fold_probability(with_evo, other), label)
+        across.append({"seed": other, "covariates_only": a, "covariates_plus_model": b, "gain": b - a})
+    gains = np.array([row["gain"] for row in across])
+    levels = np.array([row["covariates_only"] for row in across])
+
+    return {"n": int(len(df)), "n_positives": int(label.sum()),
+            "across_seeds": {"n_seeds": n_seeds,
+                             "covariates_only_mean": float(levels.mean()),
+                             "covariates_only_range": [float(levels.min()), float(levels.max())],
+                             "gain_mean": float(gains.mean()),
+                             "gain_range": [float(gains.min()), float(gains.max())],
+                             "per_seed": across},
+            "single_feature_auroc": {"single_variant_effect_size": auroc(single, label),
+                                     "model_interaction_abs": auroc(model, label),
+                                     "closeness_negative_bp": auroc(closeness, label),
+                                     "gc_content": auroc(gc, label)},
+            "covariates_only": auroc(without, label),
+            "covariates_plus_model": auroc(with_model, label),
+            "gain": auroc(with_model, label) - auroc(without, label),
+            "gain_95ci": group_boot(groups, lambda i: auroc(with_model[i], label[i]) - auroc(without[i], label[i]),
+                                    n_boot, seed)}
+
+
+def precision_strata(df, keeps=(1.0, 0.75, 0.5, 0.25)):
+    rows = []
+    for keep in keeps:
+        subset = df[df.epsilon_se <= df.epsilon_se.quantile(keep)]
+        ceiling = noise_ceiling(subset.epsilon_refalt, subset.epsilon_se)
+        rho = float(spearmanr(subset.model_interaction, subset.epsilon).statistic)
+        ceiling_value = ceiling["max_observed_correlation"] if "max_observed_correlation" in ceiling \
+            else float(np.sqrt(max(ceiling["reliability"], 0.0)))
+        rows.append({"keep": keep, "n": int(len(subset)),
+                     "reliability": ceiling["reliability"], "ceiling": ceiling_value,
+                     "spearman": rho,
+                     "disattenuated": rho / ceiling_value if ceiling_value > 0 else None})
+    return rows
+
+
+def audit_analyses(df, audit_path, folds=5, n_boot=1000, seed=0, plot_path=None):
+    """Everything that needs the paper's labels and raw element activity."""
+    joined = join_audit(df, audit_path)
+    return {"audit": str(audit_path),
+            "reproduction": reproduction_check(joined),
+            "single_variants": single_variant_report(joined, n_boot, seed),
+            "elements": element_report(joined, folds, n_boot, seed, plot_path),
+            "detection": detection_report(joined, folds, n_boot, seed),
+            "precision_strata": precision_strata(joined),
+            "libraries": joined.pair_id.str.split("|").str[0].str.split(";").str[-1].value_counts().to_dict()}
+
+
+def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_boot=1000, threshold=0.25, audit=None):
     if n_boot < 1 or threshold < 0:
         raise ValueError("bootstrap must be positive and threshold nonnegative")
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
@@ -493,7 +760,7 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
               "inputs": {"quartets_sha256": file_hash(quartets_path), "scores_sha256": file_hash(scores_path)}}
     if "epsilon_se" in df:
         se = pd.to_numeric(df.epsilon_se, errors="coerce")
-        result["noise_ceiling"] = noise_ceiling(y, se)
+        result["noise_ceiling"] = noise_ceiling(df.epsilon_refalt, se)
         reliability = result["noise_ceiling"]["reliability"]
         if reliability > 0:
             scale = np.sqrt(reliability)
@@ -507,6 +774,10 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
             })
         mask = np.isfinite(se) & (se > 0) & (df.epsilon.abs() > 1.96 * se)
         result["exploratory_source_SE_subset"] = metrics(df.epsilon[mask], df.model_interaction[mask], threshold)
+    if audit and Path(audit).exists():
+        result["audit_analyses"] = audit_analyses(df, audit, folds, n_boot, seed, out / "elements_gc_kmer.png")
+    elif audit:
+        result["audit_analyses"] = f"skipped, {audit} not found"
     (out / "metrics.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     return result
 
@@ -525,13 +796,14 @@ def main():
     p.add_argument("--quartets", required=True); p.add_argument("--scores", required=True); p.add_argument("--out", required=True)
     p.add_argument("--label", default="Evo 2"); p.add_argument("--folds", type=int, default=5); p.add_argument("--seed", type=int, default=0)
     p.add_argument("--bootstrap", type=int, default=1000); p.add_argument("--sign-threshold", type=float, default=0.25)
+    p.add_argument("--audit", default="data/audit.csv.gz")
     args = parser.parse_args()
     if args.command == "prepare-siraj":
         result = prepare_siraj(args.windows, args.code_zip, args.out, args.cell, args.min_dna, args.max_se)
     elif args.command == "score":
         result = score_quartets(args.quartets, args.output, args.backend, args.checkpoint, args.revision, args.batch_size, args.weights)
     else:
-        result = evaluate(args.quartets, args.scores, args.out, args.label, args.folds, args.seed, args.bootstrap, args.sign_threshold)
+        result = evaluate(args.quartets, args.scores, args.out, args.label, args.folds, args.seed, args.bootstrap, args.sign_threshold, args.audit)
     print(json.dumps(result, indent=2, allow_nan=False))
 
 
