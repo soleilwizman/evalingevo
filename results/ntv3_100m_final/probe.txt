@@ -1,2 +1,0 @@
-n=2595  InstaDeepAI/NTv3_100M_pre  layer core.transformer_blocks.5.final_layer_norm  pooling mean  width 768
-
