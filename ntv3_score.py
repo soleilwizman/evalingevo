@@ -74,8 +74,8 @@ class NTv3Scorer:
             kwargs["revision"] = revision
         repo = model_name if "/" in model_name else f"InstaDeepAI/{model_name}"
         self.tokenizer = AutoTokenizer.from_pretrained(repo, **kwargs)
-        self.model = AutoModelForMaskedLM.from_pretrained(repo, **kwargs)
-        self.model = self.model.to(torch.bfloat16) if use_bfloat16 else self.model.float()
+        self.model = AutoModelForMaskedLM.from_pretrained(
+            repo, torch_dtype=torch.bfloat16 if use_bfloat16 else torch.float32, **kwargs)
         self.model.eval().to(device)
         self.mask_id = self.tokenizer.mask_token_id
         if self.mask_id is None:
@@ -205,7 +205,6 @@ def main():
     result = score_quartets_ntv3(args.quartets, args.output, args.checkpoint, args.revision,
                                  args.batch_size, args.device, not args.fp32, args.limit)
     print(json.dumps(result, indent=2))
-
 
 if __name__ == "__main__":
     main()
