@@ -5,3 +5,4 @@ __pycache__/
 *.egg-info/
 runs/
 .DS_Store
+results/figures/cache/
