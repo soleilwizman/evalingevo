@@ -6,3 +6,6 @@ __pycache__/
 runs/
 .DS_Store
 results/figures/cache/
+
+# variant-level embedding matrices; regenerate with embed_variants.py
+results/*_variants/X_*.npy
