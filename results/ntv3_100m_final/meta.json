@@ -1,0 +1,9 @@
+{
+  "model": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_100M_pre",
+  "revision": "main",
+  "layer": "core.transformer_blocks.5.final_layer_norm",
+  "width": 768,
+  "n": 2595,
+  "padded_length": 256
+}
