@@ -77,9 +77,26 @@ If you would rather have a self-contained directory, add `--include-reference`
 to the embedding run (5,428 to 8,023 sequences, about 48% more time) and then
 drop `--reference` from the probe.
 
-Each writes `variant_probe.json` beside the embeddings with the probe's
-Spearman, its interval, and its margin over the delta k-mer baseline (+0.177),
-which is the number that decides whether the probe found anything.
+Each writes `variant_probe.json` beside the embeddings with four rows and two
+margins:
+
+| row | what it answers |
+|---|---|
+| difference vector `h(alt) - h(ref)` | the probe itself |
+| **reference only, control** | can `h(ref)` alone predict the effect? |
+| delta k-mers | the baseline every other bar is judged against |
+| difference plus delta k-mers | does the model add to the baseline? |
+
+The two margins are the results. **Difference minus reference-only** says
+whether the subtraction bought anything: each reference carries about two
+variants, so `h(ref)` alone can only learn how mutable that element is, never
+which substitution happened. If the difference vector does not beat it, the
+probe is reading the genomic background rather than the variant, and its
+correlation is not evidence about variant effects. **Difference minus delta
+k-mers** (+0.177 to beat) is whether the model beats letter counting.
+
+`--include-alternate` adds `h(alt)` alone as a third control, at the cost of
+another wide ridge fit.
 
 ## What to expect, and the one caveat worth knowing first
 

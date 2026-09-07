@@ -86,12 +86,12 @@ def difference_vectors(embeddings, reference, table, pooling):
                          f"{reference or embeddings}")
     alt = np.asarray(alt_matrix[[alt_index[s] for s in table.sequence_id]], dtype=np.float64)
     ref = np.asarray(ref_matrix[[ref_index[s] for s in table.reference_id]], dtype=np.float64)
-    return alt - ref, alt_meta
+    return alt, ref, alt_meta
 
 
 def probe(embeddings, label, reference=None, pooling="mean",
           predictions="results/evo2_7b_base/predictions.csv",
-          folds=5, seed=0, n_boot=1000):
+          folds=5, seed=0, n_boot=1000, include_alternate=False):
     table = single_variants(predictions)
     # single_variants keeps the reference sequence but not its hash; recover it.
     quartets = pd.read_csv("data/quartets.csv.gz", usecols=["seq_wt", "id_wt"])
@@ -101,17 +101,26 @@ def probe(embeddings, label, reference=None, pooling="mean",
         raise SystemExit("a reference sequence has no id in quartets.csv.gz")
 
     y, groups = table.y.to_numpy(), table.group_id.to_numpy()
-    delta, meta = difference_vectors(embeddings, reference, table, pooling)
+    alt, ref, meta = difference_vectors(embeddings, reference, table, pooling)
+    delta = alt - ref
     baseline = kmers(table.seq.tolist()) - kmers(table.seq_ref.tolist())
 
     def fit(x):
         return out_of_fold_linear(x, y, groups, folds, ridge=x.shape[1] > 1, seed=seed)
 
+    # The reference-only row is the control that makes the difference vector
+    # mean something. Each reference carries about two variants, so a probe on
+    # h(ref) alone can only learn how mutable the element is, never which
+    # substitution happened. If it matches the difference vector, the
+    # subtraction bought nothing and the probe is reading the background.
     fits = {
         f"{label} difference vector": fit(delta),
+        f"{label} reference only, control": fit(ref),
         "delta k-mers": fit(baseline),
         f"{label} plus delta k-mers": fit(np.hstack([delta, baseline])),
     }
+    if include_alternate:
+        fits[f"{label} alternate only, control"] = fit(alt)
     rows = {}
     for name, prediction in fits.items():
         rho = float(spearmanr(prediction, y).statistic)
@@ -122,6 +131,19 @@ def probe(embeddings, label, reference=None, pooling="mean",
         print(f"  {name:44} {rho:+.4f}  [{low:+.4f}, {high:+.4f}]", flush=True)
 
     margins = {}
+    control = rows[f"{label} reference only, control"]["spearman"]
+    difference = rows[f"{label} difference vector"]["spearman"]
+    low, high = paired_interval(fits[f"{label} difference vector"],
+                                fits[f"{label} reference only, control"], y, groups)
+    over_control = {"margin": difference - control, "interval": [float(low), float(high)],
+                    "verdict": "the difference vector carries variant-specific signal "
+                               "the reference alone does not" if low > 0 else
+                               "no better than the reference alone: the probe is reading "
+                               "the background, not the substitution" if high < 0 else
+                               "not distinguishable from the reference alone"}
+    print(f"  difference minus reference-only control: {over_control['margin']:+.4f} "
+          f"[{low:+.4f}, {high:+.4f}] -> {over_control['verdict']}", flush=True)
+
     for name in (f"{label} difference vector", f"{label} plus delta k-mers"):
         low, high = paired_interval(fits[name], fits["delta k-mers"], y, groups)
         margin = rows[name]["spearman"] - rows["delta k-mers"]["spearman"]
@@ -141,7 +163,8 @@ def probe(embeddings, label, reference=None, pooling="mean",
             "feature": "h(alt) - h(ref), pooled, same checkpoint for both",
             "protocol": "grouped five-fold shuffled seed 0; ridge for multi-column "
                         "features; 95% interval resamples whole region groups",
-            "readouts": rows, "margin_over_kmer_delta": margins}
+            "readouts": rows, "margin_over_kmer_delta": margins,
+            "margin_over_reference_only": over_control}
 
 
 def main():
@@ -159,10 +182,14 @@ def main():
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--bootstrap", type=int, default=1000)
+    parser.add_argument("--include-alternate", action="store_true",
+                        help="also fit h(alt) alone; another background control, and "
+                             "another wide ridge fit")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
     result = probe(args.embeddings, args.label, args.reference, args.pooling,
-                   args.predictions, args.folds, args.seed, args.bootstrap)
+                   args.predictions, args.folds, args.seed, args.bootstrap,
+                   args.include_alternate)
     out = Path(args.out or Path(args.embeddings) / "variant_probe.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n")
