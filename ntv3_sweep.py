@@ -57,11 +57,28 @@ def find_layers(model):
 
 def tensor_output(output, name):
     """Extract a batch-first hidden-state tensor from a module output."""
-    if isinstance(output, (tuple, list)):
-        output = next((item for item in output if hasattr(item, "ndim")), None)
-    if not hasattr(output, "ndim") or output.ndim != 3:
+    tensors = []
+
+    def visit(value):
+        if hasattr(value, "ndim") and value.ndim == 3:
+            tensors.append(value)
+        elif hasattr(value, "items"):
+            for _, item in value.items():
+                visit(item)
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                visit(item)
+        elif hasattr(value, "_fields"):
+            for field in value._fields:
+                visit(getattr(value, field))
+        elif hasattr(value, "__dict__"):
+            for item in vars(value).values():
+                visit(item)
+
+    visit(output)
+    if not tensors:
         raise RuntimeError(f"layer {name} returned an unexpected output")
-    return output
+    return tensors[0]
 
 
 def main():
@@ -134,7 +151,10 @@ def main():
             state = captured[i]
             if state.shape[0] != len(batch):
                 raise RuntimeError(f"layer {name} is not batch-first: {tuple(state.shape)}")
-            real = state[:, span].float()
+            # Transformer blocks operate at the two-position bottleneck; the
+            # convolutional stack operates at the 256-token sequence length.
+            real = state[:, span] if state.shape[1] >= span.stop else state
+            real = real.float()
             vec = real.mean(1) if args.pooling == "mean" else real[:, -1]
             if not torch.isfinite(vec).all():
                 raise RuntimeError(f"named layer {name} produced non-finite activations")
