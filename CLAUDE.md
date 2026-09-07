@@ -28,6 +28,7 @@ python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
 python3 evo_probe.py probe --embeddings results/evo_probe --pooling mean
 python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
 python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
+python3 recoding_bias.py                              # what recoding changes, and the zero-interaction null
 
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
 python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
@@ -68,6 +69,22 @@ correct, but nothing in the tree regenerates them.
 The ceiling is estimated on `epsilon_refalt`; correlations and RMSE are on the recoded `epsilon`.
 Recoding makes epsilon roughly 76% positive, which is why the baseline to beat is the training
 mean rather than zero.
+
+Two traps follow from that, both quantified by `recoding_bias.py`. **Never quote a ceiling against a
+correlation from the other coding.** Recoding cannot change magnitude, so `E[eps^2]` is 0.12515 either
+way; it moves the mean from -0.00188 to +0.17998, and that shift is the entire variance gap
+(0.12514 - 0.09275 = 0.03239 = the gap in squared means). So `noise_ceiling` returns 0.286/0.535 on
+`epsilon_refalt` and 0.0365/0.191 on `epsilon`, and neither number describes the other column. The
+0.191 is also not a licensed ceiling, since the flip is chosen from the same noisy activities that
+carry the error; on the recoded scale prefer the RMSE band, 0.29894 floor against a 0.30478
+training-fold mean, which is 0.0058 wide rather than the 0.055 measured from zero.
+
+**The recoded positive shift is mostly selection bias, not biology.** The baseline is the lowest of
+four noisy readings, so it is biased low and subtracting it pushes epsilon up. Forcing the true
+interaction to zero for every pair and redrawing all four activities from the audit's per-diplotype
+`*_Log2FC_SE` still yields a mean of +0.140 to +0.168 and 71.5% to 72.9% positive, against the
+observed +0.181 and 76.0%. Treating observed activity as truth stabilises the baseline choice, so
+that understates the bias. Do not report the 76% as a measured property of the pairs.
 
 Sign convention throughout: `A + B - WT - AB`, expected additive minus observed double. Positive
 means the double falls short. `load_quartets` asserts this, and asserts that sequences,
