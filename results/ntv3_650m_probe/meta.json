@@ -1,0 +1,9 @@
+{
+  "model": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_650M_pre",
+  "revision": "main",
+  "layer": "hidden_states[-4]",
+  "width": 1536,
+  "n": 2595,
+  "padded_length": 256
+}
