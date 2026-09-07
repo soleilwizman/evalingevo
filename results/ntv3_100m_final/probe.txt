@@ -9,3 +9,4 @@ predict the mean                  +0.0000   1.7194
 
 noise floor from 20 label permutations: -0.0011 +/- 0.0695
 probe minus word counts: -0.0131  95% interval [-0.0404, +0.0133]
+Not distinguishable from word counts on this evidence.

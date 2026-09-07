@@ -20,7 +20,7 @@ Aim 2: Investigate why Evo performs that way using mechanistic interpretability.
 On a prespecified subset of correctly and incorrectly predicted pairs, we can compare aligned hidden activations across all four genotypes:
 Δh = h(A) + h(B) − h(WT) - h(AB)
 
-Following the same convention as ε, positive Δh means the double-mutant activation falls short of that combination and negative Δh means it overshoots. Moving from the additive expectation in either direction is evidence of a non-additive internal computation. Reverse-complement averaging is on.
+Following the same convention as ε, positive Δh means the double-mutant activation falls short of that combination and negative Δh means it overshoots. Moving from the additive expectation in either direction is evidence of a non-additive internal computation. As with the sequence scores, we would average the forward and reverse-complement orientations; the embedding code in this repository does not do that yet.
 
 We can examine a small, fixed set of layers and positions at or downstream of the variants in each orientation, then relate interaction-sensitive activations to regulatory motifs, using matched controls for generic mutation responses. If we find features that respond strongly to the double mutant but weakly to the reference and either single mutant, or vice versa, the next step would be to patch or ablate these features’ contribution to Evo’s internal activations to better understand how Evo encodes interaction. We can also project activations into SAE features and identify features whose quartet contrast is unusually large. We will examine whether these features correspond to plausible sequence patterns, such as motif creation or disruption, using sequence controls and matched near-additive pairs. We can optionally compare results to activity models such as Borzoi or AlphaGenome
 
@@ -28,41 +28,60 @@ The project should yield a reproducible Python pipeline for computing experiment
 
 (3) MVP (Code here)
 
-We selected one cell type (K562, a human erythroleukemia cell line with a large number of complete measurements in the source dataset) in the dataset. After filtering, there were 2833 quartet groups where all four sequences were present and both variants were single-base substitutions. Every variant sequence had to have at least 20 mean DNA counts and SE of 0.5 or less (one could also weigh each pair by 1/(SE^2) for the log2 RNA/DNA activity measurement). 
+We selected one cell type, K562, fixed in preprocessing before any scoring. After filtering, there were 2833 quartet groups where all four sequences were present and both variants were single-base substitutions. Every variant sequence had to have at least 20 mean DNA counts and SE of 0.5 or less (one could also weigh each pair by 1/(SE^2) for the log2 RNA/DNA activity measurement). 
 
-Siraj et al. recode alleles by measured activity and take the lowest-activity diplotype as the baseline. There are 58 non-additive pairs in our filtered set out of 2,833 pairs total (2,595 after deduplication). Recoded, 86.2% of the 58 left in our filtered dataset are interfering, compared with the paper's published 139 of 180, or 77.2%. 
+Siraj et al. recode alleles by measured activity and take the lowest-activity diplotype as the baseline. There are 58 non-additive pairs in our filtered set out of 2,833 pairs total, which use 2,595 distinct reference 200-mers. Recoded, 86.2% of the 58 left in our filtered dataset are interfering, compared with the paper's published 139 of 180, or 77.2%. 
 
-The 2,595 pairs fall into 2,251 groups of overlapping genomic regions, accounted for in cross-validation. Siraj et al. assayed each pair in up to six overlapping 200-base windows that shift the variants' position within the oligo – for each quartet, we selected the “middle” window, in which the first variant of the pair sits at position 100, and the second variant within 100bp up or downstream (a more rigorous analysis would include longer flanking sequence lengths).
+The 2,833 pairs fall into 2,251 groups of overlapping genomic regions, accounted for in cross-validation. Siraj et al. assayed each pair in up to six overlapping 200-base windows that shift the variants' position within the oligo – for each quartet, we selected the “middle” window, in which the first variant of the pair sits at position 100; in the retained set the second variant always falls downstream of it, 2 to 89 bases away (a more rigorous analysis would include longer flanking sequence lengths).
 
-Using the frozen evo2_7b_base checkpoint, we could evaluate for each quartet (1) Evo sequence score S (s(A) + s(B) − s(WT) - s(AB)) and (2) experimental activity scoring (ε = y(A) + y(B) − y(WT) - y(AB)). We ran a Spearman correlation between the ranking of Evo interaction m and the ranking of measured experimental activity across the 2,833 pairs; for uncertainty, we resampled overlapping-region groups 1,000 times and recalculated the statistical measures seen in the figures. 
+Using the frozen evo2_7b_base checkpoint, we could evaluate for each quartet (1) Evo sequence score S (s(A) + s(B) − s(WT) - s(AB)) and (2) experimental activity scoring (ε = y(A) + y(B) − y(WT) - y(AB)). We ran a Spearman correlation between the ranking of Evo interaction I and the ranking of measured epistasis ε across the 2,833 pairs; for uncertainty, we resampled overlapping-region groups 1,000 times and recalculated the statistical measures seen in the figures. 
 
-Because Evo log-likelihood units and MPRA log2-activity units differ, a supervised straight-line calibration could convert Evo’s interaction score into a useful numerical prediction (“calibrated Evo”). After modeling [experimental activity measurement = intercept + slope × Evo score (calculated above)] where (x,y) = (Evo score, experimental activity measurement), we ran five-fold cross-validation, calculating RMSE on the 20% held-out set between predicted score and measured interference.
+Because Evo log-likelihood units and MPRA log2-activity units differ, a supervised straight-line calibration could convert Evo’s interaction score into a useful numerical prediction (“calibrated Evo”). After modeling [experimental activity measurement = intercept + slope × Evo score (calculated above)] where (x,y) = (Evo score, experimental activity measurement), we ran five-fold cross-validation, calculating RMSE on the held-out fold between predicted and measured ε.
  
 .
 
 (4) Preliminary results
 
-First, Evo does not rank single-variant effects. Each quartet contains two single-substitution sequences, giving 5,666 single variants with both an Evo score change and a measured activity change. The rank correlation between the size of Evo's predicted change and the size of the measured change is -0.006, (95% CI -0.034 to +0.023). Across the 2,595 distinct reference 200-mers, Evo's whole-sequence score against the measured reference activity gives Spearman -0.018 (CI -0.061 to +0.025), whereas counting G and C in the same 200 bases gives +0.328. In another baseline looking at 1, 2, 3 k-mers, for each 200-base sequence we counted how often each single-letter string appears (4 numbers), each two-letter string (16), and each three-letter string (64) giving 84 numbers per sequence. Fitting a plain linear model on those 84 numbers, it correlated with enhancer activity at rank correlation 0.458.
+First, Evo does not rank single-variant effects. Each quartet contains two single-substitution sequences, giving 5,666 single variants with both an Evo score change and a measured activity change. The rank correlation between the size of Evo's predicted change and the size of the measured change is -0.006, (95% CI -0.034 to +0.022). Across the 2,595 distinct reference 200-mers, Evo's whole-sequence score against the measured reference activity gives Spearman -0.018 (CI -0.060 to +0.025), whereas counting G and C in the same 200 bases gives +0.328. In another baseline looking at 1, 2, 3 k-mers, for each 200-base sequence we counted how often each single-letter string appears (4 numbers), each two-letter string (16), and each three-letter string (64) giving 84 numbers per sequence. Fitting ridge regression on those 84 numbers, out of fold under the same grouped five-fold split, it correlated with enhancer activity at rank correlation 0.458.
 
 
-Notably, as Evo 2 is autoregressive, we repeated everything with Nucleotide Transformer v3, the masked language model also pretrained on OpenGenome2. To score, we masked one base at a time and added the log probability of the base that is actually there, across all 200 positions, averaged over forward and reverse-complement, just as was done on Evo. Comparing predicted score to measured experimental sequence activity, Evo 2's log-likelihood correlates with measured reference activity at Spearman -0.019, cluster-bootstrap interval -0.060 to +0.025, while NTv3 gives -0.088, interval -0.130 to -0.043; indistinguishable. On single variants, Spearman -0.005 (CI -0.034 to +0.022) against Evo's -0.006. On variant interaction, Evo 2 gives Spearman +0.021 (interval -0.019 to +0.059) and NTv3 +0.021 (-0.017 to +0.059). NTv3's U-Net requires a sequence length divisible by 128, so each oligo was padded symmetrically to 256 with N, and only the 200 real positions were scored. 
-Measured experimental activity variance is 0.12514, and the average squared measurement standard error is 0.08937.
+Notably, as Evo 2 is autoregressive, we repeated everything with Nucleotide Transformer v3, a masked language model, using the frozen NTv3_100M_pre checkpoint. To score, we masked one base at a time and added the log probability of the base that is actually there, across all 200 positions, averaged over forward and reverse-complement, just as was done on Evo. Comparing predicted score to measured experimental sequence activity, Evo 2's log-likelihood correlates with measured reference activity at Spearman -0.018, cluster-bootstrap interval -0.060 to +0.025, while NTv3 gives -0.088, interval -0.130 to -0.043, which is weakly negative rather than flat. On single variants, Spearman -0.005 (CI -0.034 to +0.022) against Evo's -0.006. On variant interaction, Evo 2 gives Spearman +0.021 (interval -0.019 to +0.059) and NTv3 +0.021 (-0.017 to +0.059). NTv3's U-Net requires a sequence length divisible by 128, so each oligo was padded symmetrically to 256 with N, and only the 200 real positions were scored. 
+The variance of measured epistasis is 0.12514, and the average squared measurement standard error is 0.08937, so reliability is 0.286 and no predictor can exceed an observed correlation of 0.535 here.
 
-On epistasis (recoded contrast, results/evo2_7b_base/metrics.json):
+On epistasis:
+Comparison
 
-| Comparison | Result | Comments |
-|---|---|---|
-| Spearman's rank correlation of Evo score versus measured experimental activity | 0.0205 (95% interval -0.0190 to +0.0589) | Almost no rank association |
-| Pearson correlation of Evo score versus measured experimental activity | 0.0030 (95% interval -0.0366 to +0.0409) | Almost no linear association |
-| RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured experimental activity | RMSE 0.30498 | Measurement of how close Evo-based numerical predictions are to experimental reality |
-| RMSE of training-fold mean reference versus measured experimental activity | RMSE 0.30478 | The reference to beat; paired bootstrap interval for calibrated Evo minus this is -0.00042 to -0.00002 |
-| RMSE of zero prediction versus measured experimental activity (Predicted score = 0 for every pair; additive assumption) | RMSE 0.35376 | Simple reference prediction; biased under recoding, because recoded epsilon has mean +0.180 |
+
+Result
+
+
+Comments
+Spearman's rank correlation of Evo score versus measured epistasis
+0.0205
+ 95% interval -0.0190 to 0.0589
+Almost no rank association
+Pearson correlation of Evo score versus measured epistasis
+0.0030
+ 95% interval -0.0366 to 0.0409
+Almost no linear association
+RMSE of out-of-fold calibrated Evo prediction (rescaled) versus measured epistasis
+RMSE 0.30498
+Measurement of how close Evo-based numerical predictions are to experimental reality
+RMSE of training-fold mean reference versus measured epistasis
+RMSE 0.30478
+Another prediction
+RMSE of zero prediction versus measured epistasis (Predicted score = 0 for every pair; additive assumption)
+RMSE 0.35376
+Simple reference prediction
+RMSE floor for a predictor limited only by measurement error
+RMSE 0.29894
+The whole competitive range is 0.055 wide
 
 Note: While activity (the measured output) is not 1:1 comparable with Evo’s predicted “naturalness” score, an enhancer's only job is turning genes on. So, to an extent, in this case, "does this variant matter" and "does it change how much the gene turns on" are the same question. 
 
 
 
-Int_emVar is the source dataset’s Boolean flag for an interaction expression-modulating variant pair. After quality control, reducing the dataset to 2833 pairs, 58 were flagged as statistically significantly nonadditive (2.05%). Across all 2,833 pairs, the calibrated Evo prediction was indistinguishable from predicting the training-fold mean. Calibrated Evo has RMSE 0.30498, the training-fold mean has RMSE 0.30478, and the zero-interaction reference has RMSE 0.35376. Both constant baselines beat zero only because the recoded epsilon is mostly positive (mean +0.180, 75.9% of pairs interfering), so the intercept, not Evo's score, accounts for the gain over zero, indicating that under these MVP conditions, Evo’s score adds essentially no predictive information beyond a trivial baseline, consistent with the near-zero correlation between Evo’s interaction score and measured epistasis, and reports from other evaluators of Evo2 on this metric. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured experimental activity is 0.12514, and the mean squared standard error is 0.08937. Error increases for larger measured epistasis values, meaning Evo particularly fails on the biologically interesting, strongly non-additive cases identified by Siraj et al. Notably, the full-dataset RMSE is dominated by the large number of small-effect pairs, while the strongly non-additive pairs are both rare and noisy, but the overall conclusion remains supported by the near-zero correlation and lack of improvement over the training-mean baseline; performance specifically on Siraj’s identified non-additive subset remains to be established. 
+Int_emVar is the source dataset’s Boolean flag for an interaction expression-modulating variant pair. After quality control, reducing the dataset to 2833 pairs, 58 were flagged as statistically significantly nonadditive (2.05%). Across all 2,833 pairs, the calibrated Evo prediction was no more accurate than predicting a constant. Recoding makes ε about 76% positive, so the constant to beat is the training-fold mean rather than zero. Calibrated Evo has RMSE 0.30498 against 0.30478 for the training-fold mean, and the cluster-bootstrap interval on that gap runs -0.00042 to -0.00002, entirely on the wrong side. Both beat the zero-interaction reference at 0.35376, which only reflects the nonzero mean of recoded ε. This indicates that under these MVP conditions, Evo’s score adds essentially no predictive information beyond a trivial baseline, consistent with the near-zero correlation between Evo’s interaction score and measured epistasis. The four-way Evo likelihood difference does not usefully order the measured interactions in this dataset. Across our pairs, the variance of measured epistasis is 0.12514, and the mean squared standard error is 0.08937. Error increases for larger measured epistasis values, meaning Evo particularly fails on the biologically interesting, strongly non-additive cases identified by Siraj et al. Notably, the full-dataset RMSE is dominated by the large number of small-effect pairs, while the strongly non-additive pairs are both rare and noisy, but the overall conclusion remains supported by the near-zero correlation and lack of improvement over the additive baseline; performance specifically on Siraj’s identified non-additive subset remains to be established. 
 
 
 (5) Some Next Steps

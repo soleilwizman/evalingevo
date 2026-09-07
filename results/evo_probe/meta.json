@@ -1,0 +1,10 @@
+{
+  "layer": "blocks.26.mlp.l3",
+  "checkpoint": "evo2_7b_base",
+  "poolings": [
+    "mean",
+    "last"
+  ],
+  "n": 2595,
+  "width": 4096
+}

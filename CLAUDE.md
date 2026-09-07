@@ -1,0 +1,130 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A benchmark of frozen genomic language models (Evo 2 7B, Nucleotide Transformer v3) against
+measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Seven flat Python
+scripts, no package, no test suite, no linter config. The README is the paper draft and its
+numbers must be kept in sync with `results/*/metrics.json`.
+
+## Commands
+
+```bash
+pip install numpy pandas scipy scikit-learn matplotlib     # everything below except the GPU steps
+
+# Regenerate every Evo 2 number in README Section 4 from the cached scores (CPU, a few minutes).
+# Verified to reproduce the committed metrics.json to within 1e-4 on every value.
+python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
+    --scores results/evo2_7b_base/evo_scores.csv --out results/evo2_7b_base --label "Evo 2 7B base"
+
+# Same pipeline, NTv3 scores
+python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
+    --scores results/ntv3_100m_pre/ntv3_scores.csv --out results/ntv3_100m_pre --label "NTv3 100M pre"
+
+# Element-level probes on the committed embeddings (CPU, minutes; write the output to
+# probe.txt beside the .npy files, which is where the committed results live)
+python3 evo_probe.py probe --embeddings results/evo_probe --pooling mean
+python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
+python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
+
+# GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
+python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
+python3 ntv3_score.py --quartets data/quartets.csv.gz --checkpoint NTv3_100M_pre --revision main --output results/<dir>/ntv3_scores.csv
+python3 evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
+python3 ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
+python3 ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass
+
+# Rebuild the benchmark from the Zenodo release (only if the data files change)
+python3 evo_epistasis.py prepare-siraj --windows <all_windows.tsv> --code-zip <code.zip> --out data
+```
+
+There are no tests; `python3 -m py_compile *.py` is the only static check. To smoke-test a probe
+change without a GPU, point `--embeddings` at a scratch directory holding a random `X_mean.npy`,
+a copy of any committed `elements.csv`, and a `meta.json` with a `layer` key.
+
+## Pipeline
+
+```
+Zenodo TSV + oligo FASTA  --prepare-siraj-->  data/quartets.csv.gz, audit.csv.gz, provenance.json
+quartets  --score / ntv3_score.py-->  <scores>.csv    one row per unique sequence, keyed by sha256 of the sequence
+quartets + scores  --evaluate-->  predictions.csv, metrics.json, results_table.csv, cases.csv, plots
+predictions.csv + audit  --evo_probe.elements()-->  the element table every probe script uses
+```
+
+## The allele flip: applied exactly once
+
+Siraj et al. recode alleles lowest-to-highest activity and take the lowest-activity diplotype as
+the baseline. On the four-haplotype contrast this can only flip the sign per pair, never the
+magnitude, so it reduces to one `+1/-1` per pair. **It is applied once, in `add_flip` inside
+`evo_epistasis.py`, during `evaluate`.** `predictions.csv` therefore carries `epsilon_refalt`
+(the original ref/alt contrast), `flip`, and `epsilon` (recoded); `model_interaction` is recoded
+with the same flip. Never recompute or reapply it downstream. A script that did
+(`analysis_section4.py`, since deleted) silently undid the recoding and reported a noise ceiling
+of 0.192 instead of 0.535. `results/section4/numbers.json` is its orphaned output: the values are
+correct, but nothing in the tree regenerates them.
+
+The ceiling is estimated on `epsilon_refalt`; correlations and RMSE are on the recoded `epsilon`.
+Recoding makes epsilon roughly 76% positive, which is why the baseline to beat is the training
+mean rather than zero.
+
+Sign convention throughout: `A + B - WT - AB`, expected additive minus observed double. Positive
+means the double falls short. `load_quartets` asserts this, and asserts that sequences,
+coordinates and sha256 ids agree, so `pair_id`, `id_*` and `pos_*` are trustworthy once a file
+loads.
+
+## Score cache semantics
+
+`score` and `ntv3_score.py` append to the output CSV and treat it as a resumable cache. A sibling
+`<name>.meta.json` records checkpoint, revision, score definition, code hash and package
+versions; if the meta on disk differs from the current configuration the run refuses to continue,
+so any changed configuration needs a new `--output` path. `--revision` is mandatory for model
+backends. Every sequence is scored forward and reverse-complement and the two are averaged. The
+embedding code does not average orientations.
+
+## Cross-validation and baselines
+
+All out-of-fold work uses `GroupKFold` on `group_id`, which merges overlapping genomic regions so
+near-identical 200-mers never straddle a fold. `evaluate` shuffles folds with `--seed`; the probe
+scripts do not shuffle. Do not compare a number from one protocol against the other at the third
+decimal.
+
+Every model readout is reported against the same cheap baselines: GC fraction and overlapping
+1/2/3-mer counts (`kmers` in `evo_probe.py`, 84 features), fitted with `RidgeCV` inside each
+training fold. A probe wins only if the group-bootstrap interval on `rho(probe) - rho(k-mers)`
+excludes zero (`paired_interval`). Absolute AUROC levels in the detection analysis move by
+several points with the fold draw, so `detection_report` re-estimates the gain over 20 splits;
+report the gain, not the level.
+
+## NTv3 specifics
+
+- Use `_pre` checkpoints. The `_post` models were supervised on functional tracks that may
+  include K562.
+- Input length must be divisible by 128 (7 downsamples). 200-nt oligos are padded to 256 with
+  `N`, never the pad token. `token_offset` locates where sequence tokens begin; every script
+  asserts the masked or pooled positions decode back to the input.
+- The transformer blocks sit below the 128x downsampling, so a 256-token input is two positions
+  there. Hooks capture `core.transformer_blocks.<i>.final_layer_norm`; 100M has 6 blocks, 650M
+  has 12. Mean pooling at that depth averages two vectors.
+- Load with `trust_remote_code=True` and cast `.float()` after loading. bfloat16 weights raise a
+  dtype mismatch against NTv3's float32 internals under transformers 5.
+
+## Results layout
+
+`results/<model>_<config>/` holds either an `evaluate` output set (`metrics.json`,
+`predictions.csv`, `results_table.csv`, `cases.csv`, scores CSV plus meta) or an embedding set
+(`X_mean.npy`, `X_last.npy`, `elements.csv`, `meta.json`, `probe.txt`). `elements.csv` lists the
+2,595 distinct reference 200-mers with activity and group. Probe scripts re-derive sequences from
+`predictions.csv` and refuse to run if the element table has drifted.
+
+Committed embeddings: `results/evo_probe` (Evo 2, `blocks.26.mlp.l3`, width 4096),
+`results/ntv3_100m_final` and `results/ntv3_650m_final` (final transformer block, widths 768 and
+1536).
+
+## What is not done
+
+The interaction probe, which is the point of Aim 2, has no code: extracting matched WT/A/B/AB
+activations and probing the contrast `h(A) + h(B) - h(WT) - h(AB)` against recoded epsilon. The
+existing probes are element-level only, predicting reference activity, and they tie 1/2/3-mer
+counts.
