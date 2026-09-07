@@ -1,0 +1,55 @@
+nohup: ignoring input
+Loading weights:   0%|          | 0/297 [00:00<?, ?it/s]Loading weights: 100%|██████████| 297/297 [00:00<00:00, 5124.39it/s]
+using 12 named layers under core.transformer_blocks
+  L0: core.transformer_blocks.0
+  L1: core.transformer_blocks.1
+  L2: core.transformer_blocks.2
+  L3: core.transformer_blocks.3
+  L4: core.transformer_blocks.4
+  L5: core.transformer_blocks.5
+  L6: core.transformer_blocks.6
+  L7: core.transformer_blocks.7
+  L8: core.transformer_blocks.8
+  L9: core.transformer_blocks.9
+  L10: core.transformer_blocks.10
+  L11: core.transformer_blocks.11
+2595 elements, 200 bp padded to 256, pooling 28:228 on cuda:0
+[transformers] `use_return_dict` is deprecated! Use `return_dict` instead!
+Traceback (most recent call last):
+  File "/workspace/evalingevo/ntv3_sweep.py", line 174, in <module>
+    main()
+  File "/workspace/evalingevo/ntv3_sweep.py", line 129, in main
+    model(input_ids=ids)
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/.cache/huggingface/modules/transformers_modules/InstaDeepAI/ntv3_base_model/0ecff3637f0d3ba5b686d1095083218157c2ca34/modeling_ntv3_pretrained.py", line 921, in forward
+    outs = self.core(
+           ^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1784, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/.cache/huggingface/modules/transformers_modules/InstaDeepAI/ntv3_base_model/0ecff3637f0d3ba5b686d1095083218157c2ca34/modeling_ntv3_pretrained.py", line 785, in forward
+    out = layer(x, attention_mask=None, attention_weight_bias=None)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1773, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1879, in _call_impl
+    return inner()
+           ^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1840, in inner
+    hook_result = hook(self, args, result)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/evalingevo/ntv3_sweep.py", line 115, in hook
+    captured[index] = tensor_output(output, name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/evalingevo/ntv3_sweep.py", line 63, in tensor_output
+    raise RuntimeError(f"layer {name} returned an unexpected output")
+RuntimeError: layer core.transformer_blocks.0 returned an unexpected output
