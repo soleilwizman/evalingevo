@@ -180,11 +180,10 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     km = kmers(seqs)
 
     preds, rows = {}, []
-    for name, feat in [("Evo likelihood (1 feature)", el[["s_wt"]].values),
+    for name, feat in [("Evo score (1 feature)", el[["s_wt"]].values),
                        ("GC content (1 feature)", gc),
                        ("DNA word counts (84 features)", km),
-                       ("Evo hidden layer (probe)", X),
-                       ("Evo hidden layer + word counts", np.hstack([X, km]))]:
+                       ("Evo probe (blocks.26.mlp.l3 layer)", X)]:
         preds[name] = out_of_fold(feat, y, g, folds)
         rows.append((name, spearmanr(preds[name], y).statistic,
                      float(np.sqrt(np.mean((preds[name] - y) ** 2)))))
