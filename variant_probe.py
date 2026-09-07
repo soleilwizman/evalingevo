@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """CPU: probe variant embeddings against the measured single-variant effect.
 
-Consumes an embed_variants.py directory. For each of the 5,666 single variants
-it forms the difference vector h(alt) - h(ref) from the two sequences of that
-same pair, which cancels the static genomic background: an element-level probe
+Takes the variant embeddings from embed_variants.py and the reference
+embeddings already committed, and forms h(alt) - h(ref) per variant. The
+difference cancels the static genomic background: an element-level probe
 predicts reference activity at about +0.5, so a probe fed raw embeddings would
 mostly learn which region it was looking at rather than what the variant did.
+
+The two directories must name the same checkpoint, layer and revision. That is
+checked, not assumed; subtracting embeddings from two different runs would
+produce a number that means nothing.
 
 Reported against the same baselines and the same folds as single_variant.py, so
 the number lands on the existing figures without a protocol change.
 
     python3 variant_probe.py --embeddings results/evo_variants \
-        --label "Evo 2 probe" --out results/evo_variants/variant_probe.json
+        --reference results/evo_probe --label "Evo 2 probe"
 """
 
 import argparse
@@ -27,44 +31,78 @@ from evo_probe import kmers, paired_interval
 from single_variant import single_variants
 
 
-def difference_vectors(embeddings, table, pooling):
-    """h(alt) - h(ref), one row per single variant, from one checkpoint."""
-    directory = Path(embeddings)
+def load_matrix(directory, pooling):
+    """Embedding matrix plus a sequence_id -> row index, from either layout."""
+    directory = Path(directory)
     matrix = np.load(directory / f"X_{pooling}.npy", mmap_mode="r")
-    index = pd.read_csv(directory / "sequences.csv")
+    listing = directory / "sequences.csv"
+    if not listing.exists():
+        listing = directory / "elements.csv"      # the committed reference layout
+    if not listing.exists():
+        raise SystemExit(f"{directory}: no sequences.csv or elements.csv")
+    index = pd.read_csv(listing)
     progress = directory / "progress.json"
     if progress.exists():
         done = json.loads(progress.read_text())["done"]
         if done < len(index):
-            raise SystemExit(f"{embeddings} is incomplete: {done} of {len(index)} rows "
+            raise SystemExit(f"{directory} is incomplete: {done} of {len(index)} rows "
                              "embedded. Re-run embed_variants.py to finish it.")
     if len(index) != len(matrix):
-        raise SystemExit(f"{embeddings}: {len(index)} rows but {len(matrix)} embeddings")
-    position = {sequence: row for row, sequence in enumerate(index.sequence_id)}
-    missing = {s for s in table.sequence_id if s not in position}
-    missing |= {s for s in table.wt_id if s not in position} if "wt_id" in table else set()
-    if missing:
-        raise SystemExit(f"{len(missing)} sequences have no embedding. The directory "
-                         "was probably built without the variant sequences.")
-    alt = np.asarray(matrix[[position[s] for s in table.sequence_id]], dtype=np.float64)
-    ref = np.asarray(matrix[[position[s] for s in table.reference_id]], dtype=np.float64)
-    return alt - ref
+        raise SystemExit(f"{directory}: {len(index)} rows but {len(matrix)} embeddings")
+    meta = json.loads((directory / "meta.json").read_text())
+    return matrix, {s: i for i, s in enumerate(index.sequence_id)}, meta
 
 
-def probe(embeddings, label, pooling="mean", predictions="results/evo2_7b_base/predictions.csv",
+def describe(meta):
+    """Checkpoint and layer as one comparable tuple, across both meta layouts."""
+    return (meta.get("checkpoint"),
+            meta.get("representation") or meta.get("layer"),
+            meta.get("revision"))
+
+
+def difference_vectors(embeddings, reference, table, pooling):
+    """h(alt) - h(ref), one row per single variant, from one checkpoint."""
+    alt_matrix, alt_index, alt_meta = load_matrix(embeddings, pooling)
+    if reference is None:
+        ref_matrix, ref_index, ref_meta = alt_matrix, alt_index, alt_meta
+    else:
+        ref_matrix, ref_index, ref_meta = load_matrix(reference, pooling)
+        if describe(alt_meta) != describe(ref_meta):
+            raise SystemExit(
+                "the variant and reference embeddings are not from the same run:\n"
+                f"  {embeddings}: {describe(alt_meta)}\n"
+                f"  {reference}: {describe(ref_meta)}\n"
+                "Subtracting these would be meaningless. Re-embed with matching "
+                "--checkpoint and --layer, or pass --include-reference.")
+        if alt_matrix.shape[1] != ref_matrix.shape[1]:
+            raise SystemExit(f"width mismatch: {alt_matrix.shape[1]} vs {ref_matrix.shape[1]}")
+    missing_alt = [s for s in table.sequence_id if s not in alt_index]
+    missing_ref = [s for s in table.reference_id if s not in ref_index]
+    if missing_alt:
+        raise SystemExit(f"{len(missing_alt)} variant sequences have no embedding in "
+                         f"{embeddings}")
+    if missing_ref:
+        raise SystemExit(f"{len(missing_ref)} reference sequences have no embedding in "
+                         f"{reference or embeddings}")
+    alt = np.asarray(alt_matrix[[alt_index[s] for s in table.sequence_id]], dtype=np.float64)
+    ref = np.asarray(ref_matrix[[ref_index[s] for s in table.reference_id]], dtype=np.float64)
+    return alt - ref, alt_meta
+
+
+def probe(embeddings, label, reference=None, pooling="mean",
+          predictions="results/evo2_7b_base/predictions.csv",
           folds=5, seed=0, n_boot=1000):
     table = single_variants(predictions)
     # single_variants keeps the reference sequence but not its hash; recover it.
     quartets = pd.read_csv("data/quartets.csv.gz", usecols=["seq_wt", "id_wt"])
-    reference = dict(zip(quartets.seq_wt, quartets.id_wt))
-    table = table.assign(reference_id=table.seq_ref.map(reference))
+    reference_ids = dict(zip(quartets.seq_wt, quartets.id_wt))
+    table = table.assign(reference_id=table.seq_ref.map(reference_ids))
     if table.reference_id.isna().any():
         raise SystemExit("a reference sequence has no id in quartets.csv.gz")
 
     y, groups = table.y.to_numpy(), table.group_id.to_numpy()
-    delta = difference_vectors(embeddings, table, pooling)
+    delta, meta = difference_vectors(embeddings, reference, table, pooling)
     baseline = kmers(table.seq.tolist()) - kmers(table.seq_ref.tolist())
-    meta = json.loads((Path(embeddings) / "meta.json").read_text())
 
     def fit(x):
         return out_of_fold_linear(x, y, groups, folds, ridge=x.shape[1] > 1, seed=seed)
@@ -94,7 +132,9 @@ def probe(embeddings, label, pooling="mean", predictions="results/evo2_7b_base/p
         print(f"  {name} minus delta k-mers: {margin:+.4f} "
               f"[{low:+.4f}, {high:+.4f}] -> {margins[name]['verdict']}", flush=True)
 
-    return {"label": label, "embeddings": str(embeddings), "pooling": pooling,
+    return {"label": label, "embeddings": str(embeddings),
+            "reference_embeddings": str(reference) if reference else str(embeddings),
+            "pooling": pooling,
             "checkpoint": meta.get("checkpoint"), "layer": meta.get("layer"),
             "width": int(delta.shape[1]), "n": int(len(table)),
             "target": "measured log2 effect of one substitution, ref/alt coding",
@@ -107,7 +147,12 @@ def probe(embeddings, label, pooling="mean", predictions="results/evo2_7b_base/p
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--embeddings", required=True)
+    parser.add_argument("--embeddings", required=True,
+                        help="an embed_variants.py output directory")
+    parser.add_argument("--reference", default=None,
+                        help="the committed reference embeddings for the SAME checkpoint "
+                             "and layer, e.g. results/evo_probe. Omit only if the variant "
+                             "run used --include-reference.")
     parser.add_argument("--label", required=True)
     parser.add_argument("--pooling", default="mean", choices=("mean", "last"))
     parser.add_argument("--predictions", default="results/evo2_7b_base/predictions.csv")
@@ -116,8 +161,8 @@ def main():
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
-    result = probe(args.embeddings, args.label, args.pooling, args.predictions,
-                   args.folds, args.seed, args.bootstrap)
+    result = probe(args.embeddings, args.label, args.reference, args.pooling,
+                   args.predictions, args.folds, args.seed, args.bootstrap)
     out = Path(args.out or Path(args.embeddings) / "variant_probe.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n")

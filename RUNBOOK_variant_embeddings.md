@@ -5,7 +5,16 @@ The committed embeddings cover the 2,595 reference 200-mers and **none** of the
 This is the GPU work that unblocks it. Everything downstream is CPU and already
 written and tested.
 
-Three runs, ~8,023 sequences each (2,595 reference + 5,428 variant, deduplicated).
+Three runs, 5,428 sequences each: the variant sequences only. The references
+already exist and get reused, and `variant_probe.py` refuses to subtract two
+directories unless their `meta.json` name the same checkpoint, layer and
+revision.
+
+| model | variant embeddings | reference embeddings (already committed) |
+|---|---|---|
+| Evo 2 7B, `blocks.26.mlp.l3` | `results/evo_variants` | `results/evo_probe` |
+| NTv3 100M, block 5 | `results/ntv3_100m_variants` | `results/ntv3_100m_final` |
+| NTv3 650M, block 11 | `results/ntv3_650m_variants` | `results/ntv3_650m_final` |
 
 ## 0. Before you start
 
@@ -48,33 +57,25 @@ Weights are ~13 GB and download on first use. If VRAM is tight, drop
 `--batch-size` to 2 or 1; the run is resumable so an OOM costs only the current
 batch.
 
-## 3. Verify before trusting anything
-
-The new run re-embeds the reference sequences, so its `wt` rows must reproduce
-the committed reference embeddings. If they do not, the layer, dtype, revision
-or padding has changed and the difference vectors are not comparable.
+## 3. Probe (CPU, minutes)
 
 ```bash
-python3 - <<'EOF'
-import numpy as np, pandas as pd
-new, old = "results/ntv3_100m_variants", "results/ntv3_100m_final"   # or evo_variants / evo_probe
-n = pd.read_csv(f"{new}/sequences.csv"); o = pd.read_csv(f"{old}/elements.csv")
-Xn = np.load(f"{new}/X_mean.npy", mmap_mode="r"); Xo = np.load(f"{old}/X_mean.npy")
-pos = {s: i for i, s in enumerate(n.sequence_id)}
-rows = [pos[s] for s in o.sequence_id]
-d = np.abs(np.asarray(Xn[rows]) - Xo).max()
-print(f"max abs difference on the {len(rows)} shared reference sequences: {d:.2e}")
-print("consistent" if d < 1e-3 else "MISMATCH: do not form difference vectors across these runs")
-EOF
+python3 variant_probe.py --embeddings results/ntv3_100m_variants \
+    --reference results/ntv3_100m_final --label "NTv3 100M probe"
+python3 variant_probe.py --embeddings results/ntv3_650m_variants \
+    --reference results/ntv3_650m_final --label "NTv3 650M probe"
+python3 variant_probe.py --embeddings results/evo_variants \
+    --reference results/evo_probe       --label "Evo 2 probe"
 ```
 
-## 4. Probe (CPU, minutes)
+The checkpoint, layer and revision of the two directories are compared before
+anything is subtracted, and the run stops with both tuples printed if they
+differ. That is the whole reason the references are not re-embedded: the check
+is free and the GPU time is not.
 
-```bash
-python3 variant_probe.py --embeddings results/ntv3_100m_variants --label "NTv3 100M probe"
-python3 variant_probe.py --embeddings results/ntv3_650m_variants --label "NTv3 650M probe"
-python3 variant_probe.py --embeddings results/evo_variants       --label "Evo 2 probe"
-```
+If you would rather have a self-contained directory, add `--include-reference`
+to the embedding run (5,428 to 8,023 sequences, about 48% more time) and then
+drop `--reference` from the probe.
 
 Each writes `variant_probe.json` beside the embeddings with the probe's
 Spearman, its interval, and its margin over the delta k-mer baseline (+0.177),
@@ -96,8 +97,8 @@ second look, probe a full-resolution layer instead of the transformer block.
 
 ## Sizes
 
-`X_mean.npy` and `X_last.npy` per run: NTv3 100M ~25 MB each, 650M ~50 MB each,
-Evo 2 ~131 MB each. `.gitignore` excludes `results/*_variants/X_*.npy` so a
+`X_mean.npy` and `X_last.npy` per run, at 5,428 rows: NTv3 100M ~17 MB each,
+650M ~33 MB each, Evo 2 ~89 MB each. `.gitignore` excludes `results/*_variants/X_*.npy` so a
 13 GB model's output does not land in git by accident. Commit the JSON and the
 `sequences.csv`; keep the matrices out or put them in LFS.
 

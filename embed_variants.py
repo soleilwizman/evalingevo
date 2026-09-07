@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""GPU: embed the variant sequences, not just the reference 200-mers.
+"""GPU: embed the 5,428 variant sequences, in the same layout as every other
+embedding directory in this repo.
 
-The committed embeddings cover the 2,595 distinct reference sequences and none
-of the 5,428 variant sequences, so no probe of a variant effect is possible.
-This embeds reference and variant sequences together in one pass, which is the
-only way the difference vector h(alt) - h(ref) is guaranteed to come from one
-checkpoint, one dtype and one code path.
+The committed embeddings cover the 2,595 reference 200-mers only, so no probe
+of a variant effect is possible. This adds the missing half. It embeds the
+variant sequences and nothing else; the references already exist, and
+variant_probe.py checks the two directories name the same checkpoint, layer and
+revision before it subtracts one from the other.
 
     # Evo 2 (needs the evo2 package and an NVIDIA GPU)
     python3 embed_variants.py --backend evo2 --out results/evo_variants \
@@ -37,10 +38,11 @@ MULTIPLE = 128
 POOLINGS = ("mean", "last")
 
 
-def sequence_table(quartets_path, include_double=False):
-    """One row per distinct sequence: the references and every single variant."""
+def sequence_table(quartets_path, include_reference=False, include_double=False):
+    """One row per distinct sequence. Variants only by default."""
     quartets = load_quartets(quartets_path)
-    wanted = ("wt", "a", "b") + (("ab",) if include_double else ())
+    wanted = (("wt",) if include_reference else ()) + ("a", "b") \
+        + (("ab",) if include_double else ())
     frames = []
     for state in wanted:
         frames.append(pd.DataFrame({
@@ -181,15 +183,17 @@ class NTv3Embedder:
 def run(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    table = sequence_table(args.quartets, args.include_double)
-    print(f"{len(table)} distinct sequences to embed "
-          f"({(table.role == 'wt').sum()} reference, "
-          f"{(table.role != 'wt').sum()} variant)", flush=True)
+    table = sequence_table(args.quartets, args.include_reference, args.include_double)
+    counts = table.role.value_counts().to_dict()
+    print(f"{len(table)} distinct sequences to embed  {counts}", flush=True)
 
     meta_path = out / "meta.json"
     meta = {"backend": args.backend, "checkpoint": args.checkpoint, "layer": str(args.layer),
             "revision": args.revision, "n": int(len(table)),
+            "include_reference": bool(args.include_reference),
             "include_double": bool(args.include_double),
+            "representation": (str(args.layer) if args.backend == "evo2"
+                               else f"core.transformer_blocks.{int(args.layer)}.final_layer_norm"),
             "quartets_sha256": file_hash(args.quartets),
             "code_sha256": file_hash(__file__),
             "python": platform.python_version(), "platform": platform.platform()}
@@ -239,8 +243,9 @@ def run(args):
         m.flush()
     progress_path.write_text(json.dumps({"done": len(table)}) + "\n")
     meta["width"] = int(next(iter(memmaps.values())).shape[1])
-    if args.backend == "ntv3":
-        meta["representation"] = embedder.representation
+    if args.backend == "ntv3" and embedder.representation != meta["representation"]:
+        raise SystemExit(f"resolved layer {embedder.representation} does not match "
+                         f"the recorded {meta['representation']}")
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     table.drop(columns=["seq"]).to_csv(out / "sequences.csv", index=False)
     print(f"wrote {out}/X_mean.npy and X_last.npy, width {meta['width']}")
@@ -260,6 +265,9 @@ def main():
     parser.add_argument("--revision", default="main")
     parser.add_argument("--weights", default=None, help="evo2 local weight file")
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--include-reference", action="store_true",
+                        help="also re-embed the 2,595 reference sequences, making the "
+                             "directory self-contained instead of reusing the committed ones")
     parser.add_argument("--include-double", action="store_true",
                         help="also embed the AB sequences, for a later interaction probe")
     args = parser.parse_args()
