@@ -1,0 +1,31 @@
+{
+  "n": 2595,
+  "pooling": "mean",
+  "folds": 5,
+  "a": {
+    "label": "NTv3 100M probe",
+    "dir": "results/ntv3_100m_final",
+    "width": 768,
+    "spearman": 0.442970944430591
+  },
+  "b": {
+    "label": "NTv3 650M probe",
+    "dir": "results/ntv3_650m_final",
+    "width": 1536,
+    "spearman": 0.4403020824920501
+  },
+  "difference": 0.0026688619385408785,
+  "difference_95ci": [
+    -0.026205707204194833,
+    0.03056623983279185
+  ],
+  "verdict": "not distinguishable: the interval contains zero",
+  "fold_draw_sensitivity": {
+    "probe": "NTv3 100M probe",
+    "n_draws": 6,
+    "min": 0.45177926242882577,
+    "max": 0.46069381810128157,
+    "range": 0.008914555672455804,
+    "note": "the same probe refit under different fold shuffles; a gap smaller than this range is not a result"
+  }
+}

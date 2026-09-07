@@ -129,11 +129,16 @@ def collect(results):
 
     ceiling, n_elements = element_ceiling(results / "evo2_7b_base/predictions.csv",
                                           Path("data/audit.csv.gz"))
+    # Two bars 0.003 apart read as a ranking unless the figure says otherwise.
+    comparison_path = results / "probe_comparison.json"
+    comparison = (json.loads(comparison_path.read_text())
+                  if comparison_path.exists() else None)
     return {
         "element": {"rows": element, "margins": element_margins, "baseline": kmer,
                     "baseline_name": "1/2/3-mer counts", "ceiling": ceiling, "n": n_elements,
                     "title": "Predicting element activity",
-                    "subtitle": "one value per distinct reference 200-mer"},
+                    "subtitle": "one value per distinct reference 200-mer",
+                    "not_separable": comparison},
         "single": {"rows": single, "margins": single_margins,
                    "baseline": e["kmer_delta"]["spearman"],
                    "baseline_name": "delta k-mers",
@@ -171,7 +176,7 @@ def bar_panel(axis, panel, note=None):
                   va="center", ha="left" if value >= 0 else "right", fontsize=8.5, color=INK,
                   zorder=6, bbox=dict(facecolor="white", edgecolor="none", pad=1.2))
     left = min(values.min() - pad * 3, -pad)
-    axis.set_xlim(left, values.max() + pad * 7)
+    axis.set_xlim(left, values.max() + pad * (11 if panel.get("not_separable") else 7))
     # Anchor the baseline caption on whichever side of the rule has room.
     near_right = panel["baseline"] > left + 0.62 * (values.max() + pad * 7 - left)
     axis.text(panel["baseline"], len(rows) - 0.15,
@@ -186,6 +191,22 @@ def bar_panel(axis, panel, note=None):
         f"the best readout here reaches {best:.3f}, "
         f"{100 * best / panel['ceiling']:.0f}% of that",
         fontsize=10.5, color=INK, loc="left", pad=10)
+    pair = panel.get("not_separable")
+    if pair:
+        labels = [pair["a"]["label"], pair["b"]["label"]]
+        seats = [i for i, r in enumerate(rows) if r[0] in labels]
+        if len(seats) == 2:
+            x = values.max() + pad * 1.4
+            tick = pad * 0.35
+            top, bottom = max(seats), min(seats)
+            axis.plot([x, x], [bottom, top], color=MUTED, lw=1, zorder=5)
+            for seat in (bottom, top):
+                axis.plot([x - tick, x], [seat, seat], color=MUTED, lw=1, zorder=5)
+            low, high = pair["difference_95ci"]
+            axis.text(x + tick, (bottom + top) / 2,
+                      f"  not distinguishable\n  {pair['difference']:+.3f} "
+                      f"[{low:+.3f}, {high:+.3f}]",
+                      va="center", ha="left", fontsize=8, color=MUTED, style="italic")
     if note:
         axis.text(0.38, 0.03, note, transform=axis.transAxes, ha="left", va="bottom",
                   fontsize=8.5, color=MUTED, style="italic")
