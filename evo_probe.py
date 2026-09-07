@@ -202,7 +202,7 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     print(f"\nnoise floor from {n_permutations} label permutations: "
           f"{np.mean(null):+.4f} +/- {np.std(null):.4f}")
 
-    a, b = "Evo hidden layer (probe)", "DNA word counts (84 features)"
+    a, b = "Evo probe (blocks.26.mlp.l3 layer)", "DNA word counts (84 features)"
     lo, hi = paired_interval(preds[a], preds[b], y, g)
     got = dict((r[0], r[1]) for r in rows)
     print(f"\nprobe minus word counts: {got[a] - got[b]:+.4f}  "
