@@ -37,6 +37,7 @@ python3 ntv3_unet.py list --offline --num-layers 12    # which hidden_states ind
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
 python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
 python3 ntv3_score.py --quartets data/quartets.csv.gz --checkpoint NTv3_100M_pre --revision main --output results/<dir>/ntv3_scores.csv
+python3 dnabert2_score.py --quartets data/quartets.csv.gz --revision <sha> --output results/dnabert2_117m/dnabert2_scores.csv   # needs einops, transformers 4.x
 python3 evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
 python3 ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
 python3 ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass

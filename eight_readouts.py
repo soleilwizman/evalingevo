@@ -19,7 +19,8 @@ Every interval resamples whole overlapping-region groups.
 
 What cannot be drawn from the committed results is drawn as a gap, not left out:
 
-  DNABERT-2 zero-shot   no scoring run exists on either task
+  DNABERT-2 zero-shot   drawn once results/dnabert2_117m/predictions.csv exists
+                        (dnabert2_score.py, then evaluate); a gap until then
   NTv3 650M variant probe at the deconv layer
                         the committed variant embeddings are the transformer
                         bottleneck (block 11); the bar shows that, labelled
@@ -60,6 +61,7 @@ NTV3_DECONV = "results/ntv3_650m_deconv"      # deconv_7, one vector per base
 NTV3_BOTTLENECK = "results/ntv3_650m_final"   # transformer block 11
 NTV3_VARIANTS = "results/ntv3_650m_variants"  # block 11, alternate sequences
 DB2 = "results/vp_db2_L11"                    # DNABERT-2 block 11 of 12
+DB2_PRED = "results/dnabert2_117m/predictions.csv"  # dnabert2_score.py, then evaluate
 EVO_VARIANT_PROBE = "results/vp_evo2/probe.txt"
 
 
@@ -138,8 +140,16 @@ def element_panel(folds, n_boot, seed):
                          ("NTv3 650M pseudo-log-likelihood", ntv3.s_wt.to_numpy())):
         rho, ci = interval(score, y, groups, n_boot, seed)
         rows.append(row(label, "likelihood", rho, ci, 1, zero_shot=True))
-    rows.append(gap("DNABERT-2 pseudo-log-likelihood", "likelihood",
-                    "no DNABERT-2 scoring run exists"))
+    if Path(DB2_PRED).exists():
+        db2 = elements(DB2_PRED)
+        if not db2.sequence_id.equals(evo.sequence_id):
+            raise SystemExit(f"{DB2_PRED}: element table is not aligned with Evo 2's")
+        rho, ci = interval(db2.s_wt.to_numpy(), y, groups, n_boot, seed)
+        rows.append(row("DNABERT-2 pseudo-log-likelihood", "likelihood", rho, ci, 1,
+                        zero_shot=True, source=DB2_PRED))
+    else:
+        rows.append(gap("DNABERT-2 pseudo-log-likelihood", "likelihood",
+                        "no DNABERT-2 scoring run exists (dnabert2_score.py)"))
     for label, features in (("GC content", gc_fraction(seqs).reshape(-1, 1)),
                             ("1/2/3-mer counts", kmers(seqs))):
         rho, ci = interval(fit(features), y, groups, n_boot, seed)
@@ -220,8 +230,16 @@ def variant_panel(folds, n_boot, seed):
                          ("NTv3 650M delta pseudo-log-likelihood", ntv3.delta_score.to_numpy())):
         rho, ci = interval(score, y, groups, n_boot, seed)
         rows.append(row(label, "likelihood", rho, ci, 1, zero_shot=True))
-    rows.append(gap("DNABERT-2 delta pseudo-log-likelihood", "likelihood",
-                    "no DNABERT-2 scoring run exists"))
+    if Path(DB2_PRED).exists():
+        db2 = single_variants(DB2_PRED)
+        if not db2.sequence_id.equals(evo.sequence_id):
+            raise SystemExit(f"{DB2_PRED}: single-variant table is not aligned with Evo 2's")
+        rho, ci = interval(db2.delta_score.to_numpy(), y, groups, n_boot, seed)
+        rows.append(row("DNABERT-2 delta pseudo-log-likelihood", "likelihood", rho, ci, 1,
+                        zero_shot=True, source=DB2_PRED))
+    else:
+        rows.append(gap("DNABERT-2 delta pseudo-log-likelihood", "likelihood",
+                        "no DNABERT-2 scoring run exists (dnabert2_score.py)"))
     for label, features in (("GC content", gc_fraction(seqs).reshape(-1, 1)),
                             ("1/2/3-mer delta", kmers(seqs) - kmers(refs))):
         rho, ci = interval(fit(features), y, groups, n_boot, seed)
