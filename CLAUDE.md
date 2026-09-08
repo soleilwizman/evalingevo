@@ -30,6 +30,7 @@ python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
 python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
 python3 recoding_bias.py                              # what recoding changes, and the zero-interaction null
 python3 model_comparison.py                           # one cross-model figure, same-protocol panels only
+python3 eight_readouts.py                             # two panels, eight readouts each: element activity and single-variant effect
 python3 probe_interval.py results/<dir>                # margin + interval only, ~30s, skips the slow null
 python3 ntv3_unet.py list --offline --num-layers 12    # which hidden_states index is per-base
 
