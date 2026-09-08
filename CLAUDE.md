@@ -41,6 +41,8 @@ python3 dnabert2_score.py --quartets data/quartets.csv.gz --revision <sha> --out
 python3 evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
 python3 ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
 python3 ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass
+python3 embed_variants.py --backend ntv3 --checkpoint InstaDeepAI/NTv3_650M_pre --representation deconv_final \
+    --out results/ntv3_650m_deconv_variants --batch-size 8    # variant sequences at deconv_7; pair with results/ntv3_650m_deconv
 
 # Rebuild the benchmark from the Zenodo release (only if the data files change)
 python3 evo_epistasis.py prepare-siraj --windows <all_windows.tsv> --code-zip <code.zip> --out data

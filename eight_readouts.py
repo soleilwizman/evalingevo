@@ -22,8 +22,10 @@ What cannot be drawn from the committed results is drawn as a gap, not left out:
   DNABERT-2 zero-shot   drawn once results/dnabert2_117m/predictions.csv exists
                         (dnabert2_score.py, then evaluate); a gap until then
   NTv3 650M variant probe at the deconv layer
-                        the committed variant embeddings are the transformer
-                        bottleneck (block 11); the bar shows that, labelled
+                        drawn from results/ntv3_650m_deconv_variants once
+                        embed_variants.py --representation deconv_final has run;
+                        until then the bar is the transformer bottleneck (block
+                        11), labelled as such
   Evo 2 variant probe   embeddings never committed; carried from
                         results/vp_evo2/probe.txt, hatched, no interval
 
@@ -60,6 +62,7 @@ EVO_EMB = "results/evo_probe"                 # blocks.26.mlp.l3, mean pooled
 NTV3_DECONV = "results/ntv3_650m_deconv"      # deconv_7, one vector per base
 NTV3_BOTTLENECK = "results/ntv3_650m_final"   # transformer block 11
 NTV3_VARIANTS = "results/ntv3_650m_variants"  # block 11, alternate sequences
+NTV3_DECONV_VARIANTS = "results/ntv3_650m_deconv_variants"  # deconv_7, once embedded
 DB2 = "results/vp_db2_L11"                    # DNABERT-2 block 11 of 12
 DB2_PRED = "results/dnabert2_117m/predictions.csv"  # dnabert2_score.py, then evaluate
 EVO_VARIANT_PROBE = "results/vp_evo2/probe.txt"
@@ -249,12 +252,19 @@ def variant_panel(folds, n_boot, seed):
     rho, ci = interval(fit(db2), y, groups, n_boot, seed)
     rows.append(row("DNABERT-2 probe (block 11 of 12)", "probe", rho, ci,
                     int(db2.shape[1]), source=DB2))
-    bottleneck = variant_diff(NTV3_VARIANTS, NTV3_BOTTLENECK, table)
-    rho, ci = interval(fit(bottleneck), y, groups, n_boot, seed)
-    rows.append(row("NTv3 650M probe (block 11, bottleneck)", "probe", rho, ci,
-                    int(bottleneck.shape[1]), source=NTV3_VARIANTS,
-                    substitute="deconv-layer variant embeddings do not exist; this is "
-                               "the transformer bottleneck, block 11"))
+    if Path(NTV3_DECONV_VARIANTS, "X_mean.npy").exists():
+        deconv = variant_diff(NTV3_DECONV_VARIANTS, NTV3_DECONV, table)
+        rho, ci = interval(fit(deconv), y, groups, n_boot, seed)
+        rows.append(row("NTv3 650M probe (deconv_7)", "probe", rho, ci,
+                        int(deconv.shape[1]), source=NTV3_DECONV_VARIANTS))
+    else:
+        bottleneck = variant_diff(NTV3_VARIANTS, NTV3_BOTTLENECK, table)
+        rho, ci = interval(fit(bottleneck), y, groups, n_boot, seed)
+        rows.append(row("NTv3 650M probe (block 11, bottleneck)", "probe", rho, ci,
+                        int(bottleneck.shape[1]), source=NTV3_VARIANTS,
+                        substitute="deconv-layer variant embeddings do not exist "
+                                   "(embed_variants.py --representation deconv_final); "
+                                   "this is the transformer bottleneck, block 11"))
     carried = carried_evo_variant_probe()
     if carried is None:
         rows.append(gap("Evo 2 probe (blocks.26.mlp.l3)", "probe",
@@ -366,9 +376,13 @@ def draw(element, variant, path):
     notes = [
         "Zero-shot bars are the raw Spearman of the model's own score. Baselines and "
         "probes are fitted out of fold; probes are mean-pooled embeddings at the layer named.",
-        "† No NTv3 650M variant embeddings exist at the deconv layer; panel B shows "
-        "the transformer bottleneck (block 11) instead.\n   In panel A the same checkpoint "
-        "reads +0.440 at block 11 and +0.485 at deconv_7, so the panel B bar is likely to move.",
+    ]
+    if any(r.get("substitute") for r in variant["readouts"]):
+        notes.append(
+            "† No NTv3 650M variant embeddings exist at the deconv layer; panel B shows "
+            "the transformer bottleneck (block 11) instead.\n   In panel A the same checkpoint "
+            "reads +0.440 at block 11 and +0.485 at deconv_7, so the panel B bar is likely to move.")
+    notes += [
         "* Evo 2's variant probe predates panel B's protocol and its embeddings were never "
         "committed: n = 5,428, its own folds, no interval. Read it beside the others, not "
         "against them.",

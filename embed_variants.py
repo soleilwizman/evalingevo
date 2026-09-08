@@ -18,6 +18,12 @@ revision before it subtracts one from the other.
     python3 embed_variants.py --backend ntv3 --out results/ntv3_650m_variants \
         --checkpoint InstaDeepAI/NTv3_650M_pre --layer 11 --batch-size 8
 
+    # NTv3 read at the top of the U-Net instead of the bottleneck: one vector per
+    # base, the stage results/ntv3_650m_deconv holds for the references. Pair it
+    # with that directory in variant_probe_fit.py, not with ntv3_650m_final.
+    python3 embed_variants.py --backend ntv3 --out results/ntv3_650m_deconv_variants \
+        --checkpoint InstaDeepAI/NTv3_650M_pre --representation deconv_final --batch-size 8
+
 The run is resumable. Rows are written straight into a memory-mapped .npy and
 progress.json records how many are done, so an interrupted run picks up where
 it stopped. Re-running with a different configuration refuses rather than
@@ -180,6 +186,51 @@ class NTv3Embedder:
                 hidden[:, -1, :].cpu().numpy().astype(np.float32))
 
 
+class NTv3StageEmbedder:
+    """Mirrors ntv3_unet.py embed: no special tokens, N-padded to 256, one stage of the
+    U read from the model's own hidden_states. ``deconv_final`` is per-base, so mean
+    and last are taken over the 200 real bases only, exactly as the committed
+    reference set results/ntv3_650m_deconv was pooled. Subtract those references,
+    not the bottleneck ones."""
+
+    def __init__(self, checkpoint, representation, revision="main"):
+        import torch
+        import ntv3_unet
+        self.torch, self.unet = torch, ntv3_unet
+        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        if self.device == "cpu":
+            print("WARNING: no GPU found, running on CPU. This will be slow.", flush=True)
+        self.tokenizer, self.model = ntv3_unet.load(checkpoint, revision or None, self.device)
+        probe = "ACGT" * 50
+        ids, self.left, self.padded_length = ntv3_unet.tokenize(self.tokenizer, [probe], self.device)
+        _, stages = ntv3_unet.hidden_states(self.model, ids, self.padded_length)
+        available = [name for name, _ in stages]
+        deconv = [n for n in available if n.startswith("deconv_")]
+        if representation == "deconv_final":
+            representation = deconv[-1]
+        if representation not in available:
+            raise SystemExit(f"unknown representation {representation!r}; choose from "
+                             f"deconv_final, {', '.join(available)}")
+        self.stage = representation
+        self.representation = (f"{representation} (U-Net deconv tower)"
+                               if representation.startswith("deconv_") else representation)
+        self.per_base = None
+
+    def __call__(self, sequences):
+        real_length = len(sequences[0])
+        ids, left, padded_length = self.unet.tokenize(self.tokenizer, sequences, self.device)
+        if left != self.left or padded_length != self.padded_length:
+            raise SystemExit("padding drifted between batches")
+        states, _ = self.unet.hidden_states(self.model, ids, padded_length)
+        mean, last, per_base = self.unet.pool(states[self.stage], left, real_length, padded_length)
+        if self.per_base is None:
+            self.per_base = per_base
+            if not per_base:
+                print(f"NOTE: {self.stage} is below per-base resolution; pooled over every "
+                      "position including the N padding", flush=True)
+        return mean.astype(np.float32), last.astype(np.float32)
+
+
 def run(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -188,17 +239,29 @@ def run(args):
     print(f"{len(table)} distinct sequences to embed  {counts}", flush=True)
 
     meta_path = out / "meta.json"
-    meta = {"backend": args.backend, "checkpoint": args.checkpoint, "layer": str(args.layer),
+    stage = args.backend == "ntv3" and args.representation is not None
+    if stage:
+        representation = (f"{args.representation} (U-Net deconv tower)"
+                          if args.representation.startswith("deconv_") else args.representation)
+    else:
+        representation = (str(args.layer) if args.backend == "evo2"
+                          else f"core.transformer_blocks.{int(args.layer)}.final_layer_norm")
+    meta = {"backend": args.backend, "checkpoint": args.checkpoint,
+            "layer": args.representation if stage else str(args.layer),
             "revision": args.revision, "n": int(len(table)),
             "include_reference": bool(args.include_reference),
             "include_double": bool(args.include_double),
-            "representation": (str(args.layer) if args.backend == "evo2"
-                               else f"core.transformer_blocks.{int(args.layer)}.final_layer_norm"),
+            "representation": representation,
             "quartets_sha256": file_hash(args.quartets),
             "code_sha256": file_hash(__file__),
             "python": platform.python_version(), "platform": platform.platform()}
     if meta_path.exists():
         existing = json.loads(meta_path.read_text())
+        if stage and args.representation == "deconv_final" \
+                and str(existing.get("layer", "")).startswith("deconv_"):
+            # the alias resolves to a numbered stage only once the model is loaded;
+            # take the recorded one now and check it against the resolved one below
+            meta["layer"], meta["representation"] = existing["layer"], existing["representation"]
         drift = {k for k in meta if k not in ("platform", "python") and existing.get(k) != meta[k]}
         if drift:
             raise SystemExit(f"this directory holds a different run; fields differ: "
@@ -212,9 +275,16 @@ def run(args):
     if done:
         print(f"resuming at row {done}", flush=True)
 
-    embedder = (Evo2Embedder(args.checkpoint, args.layer, args.weights)
-                if args.backend == "evo2"
-                else NTv3Embedder(args.checkpoint, int(args.layer), args.revision))
+    if args.backend == "evo2":
+        embedder = Evo2Embedder(args.checkpoint, args.layer, args.weights)
+    elif stage:
+        embedder = NTv3StageEmbedder(args.checkpoint, args.representation, args.revision)
+        if meta["layer"] != "deconv_final" and meta["layer"] != embedder.stage:
+            raise SystemExit(f"this directory holds {meta['layer']}, but deconv_final resolves "
+                             f"to {embedder.stage} on this checkpoint. Use a new --out.")
+        meta["layer"], meta["representation"] = embedder.stage, embedder.representation
+    else:
+        embedder = NTv3Embedder(args.checkpoint, int(args.layer), args.revision)
 
     memmaps, sequences = {}, table.seq.tolist()
     for start in range(done, len(table), args.batch_size):
@@ -246,6 +316,9 @@ def run(args):
     if args.backend == "ntv3" and embedder.representation != meta["representation"]:
         raise SystemExit(f"resolved layer {embedder.representation} does not match "
                          f"the recorded {meta['representation']}")
+    if stage:
+        meta["pooled_over_real_bases_only"] = bool(embedder.per_base)
+        meta["padded_length"], meta["left_offset"] = embedder.padded_length, embedder.left
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
     table.drop(columns=["seq"]).to_csv(out / "sequences.csv", index=False)
     print(f"wrote {out}/X_mean.npy and X_last.npy, width {meta['width']}")
@@ -262,6 +335,11 @@ def main():
     parser.add_argument("--layer", default=None,
                         help="evo2: a submodule name such as blocks.26.mlp.l3. "
                              "ntv3: a transformer block index, 5 for 100M, 11 for 650M")
+    parser.add_argument("--representation", default=None,
+                        help="ntv3 only: read a stage of the U-Net instead of a transformer "
+                             "block: deconv_final (one vector per base), deconv_<k>, "
+                             "conv_<k> or transformer_<k>, as ntv3_unet.py names them. "
+                             "Overrides --layer.")
     parser.add_argument("--revision", default="main")
     parser.add_argument("--weights", default=None, help="evo2 local weight file")
     parser.add_argument("--batch-size", type=int, default=4)
@@ -273,8 +351,12 @@ def main():
     args = parser.parse_args()
     if args.checkpoint is None:
         args.checkpoint = "evo2_7b_base" if args.backend == "evo2" else "InstaDeepAI/NTv3_100M_pre"
+    if args.representation is not None and args.backend != "ntv3":
+        parser.error("--representation applies to the ntv3 backend only")
     if args.layer is None:
         args.layer = "blocks.26.mlp.l3" if args.backend == "evo2" else "5"
+    if args.representation is not None:
+        args.layer = args.representation
     run(args)
 
 
