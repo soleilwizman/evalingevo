@@ -152,6 +152,8 @@ def pool(tensor, left, real_length, padded_length, upsample="none"):
 
 
 def run_list(args):
+    if args.offline:
+        return run_list_offline(args)
     tokenizer, model = load(args.checkpoint, args.revision, args.device)
     probe_length = 200
     ids, left, padded_length = tokenize(tokenizer, ["ACGT" * (probe_length // 4)], args.device)
@@ -164,6 +166,28 @@ def run_list(args):
         flag = "yes" if tensor.shape[1] == padded_length else "no"
         print(f"{name:<18}{tensor.shape[1]:>10}{tensor.shape[2]:>8}   {flag}")
     print("\ndeconv_final is an alias for the last deconv stage.")
+
+
+def run_list_offline(args):
+    """The same table from arithmetic alone, so the index mapping is checkable
+    without weights or a GPU. num_layers is 6 for the 100M and 12 for the 650M."""
+    padded = -(-args.probe_length // MULTIPLE) * MULTIPLE
+    left = (padded - args.probe_length) // 2
+    bottleneck = padded // 2 ** args.num_downsamples
+    rows = [(f"conv_{i + 1}", padded // 2 ** i) for i in range(args.num_downsamples)]
+    rows += [(f"transformer_{i + 1}", bottleneck) for i in range(args.num_layers)]
+    rows += [(f"deconv_{i + 1}", bottleneck * 2 ** (i + 1))
+             for i in range(args.num_downsamples)]
+    print(f"num_layers {args.num_layers}, num_downsamples {args.num_downsamples}: "
+          f"{len(rows)} hidden states")
+    print(f"{args.probe_length} bp padded to {padded}, left offset {left}\n")
+    print(f"{'index':>6}  {'stage':<16}{'positions':>10}   resolution")
+    for index, (name, length) in enumerate(rows):
+        scope = "per-base" if length == padded else f"downsampled {padded // length}x"
+        print(f"{index:>6}  {name:<16}{length:>10}   {scope}   "
+              f"[{index - len(rows)}]")
+    print("\nhidden_states[-1] is the top of the U. variant_probe.py's NTv3 default "
+          "of layer=-4\nis the fourth deconv block, still downsampled.")
 
 
 def run_embed(args):
@@ -257,6 +281,12 @@ def main():
     listing = sub.add_parser("list", help="print every stage of the U and its resolution")
     common(listing)
     listing.set_defaults(upsample="none")
+    listing.add_argument("--offline", action="store_true",
+                         help="print the index mapping from arithmetic, no weights needed")
+    listing.add_argument("--num-layers", type=int, default=12, dest="num_layers",
+                         help="6 for NTv3 100M, 12 for 650M (offline mode only)")
+    listing.add_argument("--num-downsamples", type=int, default=7, dest="num_downsamples")
+    listing.add_argument("--probe-length", type=int, default=200, dest="probe_length")
 
     embed = sub.add_parser("embed", help="pool one stage (or the whole deconv tower)")
     common(embed)
@@ -272,6 +302,8 @@ def main():
     embed.add_argument("--audit", default=AUDIT)
 
     args = parser.parse_args()
+    if args.cmd == "list" and args.offline:
+        return run_list_offline(args)
     if args.cmd == "embed" and not args.revision:
         raise SystemExit("--revision is mandatory for an embedding run")
     (run_list if args.cmd == "list" else run_embed)(args)
