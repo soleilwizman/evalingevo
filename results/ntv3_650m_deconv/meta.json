@@ -1,0 +1,19 @@
+{
+  "model": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_650M_pre",
+  "revision": "main",
+  "layer": "deconv_7 (U-Net deconv tower)",
+  "representations": [
+    "deconv_7"
+  ],
+  "width": 1536,
+  "n": 2595,
+  "padded_length": 256,
+  "left_offset": 28,
+  "real_length": 200,
+  "pooled_over_real_bases_only": {
+    "deconv_7": true
+  },
+  "upsample": "none",
+  "note": "NTv3 builds no attention mask, so N padding is attended even though pooling excludes those positions"
+}
