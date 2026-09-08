@@ -145,6 +145,30 @@ def out_of_fold(X, y, groups, folds=5):
     return pred
 
 
+# A pass/fail on one bootstrap draw is not a usable instrument near zero: the NTv3 650M
+# deconv margin clears zero on 7 of 10 seeds and fails on 3. So whenever the lower bound
+# lands this close, re-bootstrap and report the spread instead of a verdict.
+VERDICT_MARGIN, VERDICT_SEEDS = 0.01, 10
+
+
+def report_margin(pred_a, pred_b, y, groups, margin, win, tie, n_boot=1000):
+    """Print the interval on rho(a) - rho(b), refusing a verdict on the boundary."""
+    low, high = paired_interval(pred_a, pred_b, y, groups, n_boot, 0)
+    print(f"probe minus word counts: {margin:+.4f}  95% interval [{low:+.4f}, {high:+.4f}]")
+    if abs(low) < VERDICT_MARGIN:
+        lows = [low] + [paired_interval(pred_a, pred_b, y, groups, n_boot, s)[0]
+                        for s in range(1, VERDICT_SEEDS)]
+        cleared = sum(1 for value in lows if value > 0)
+        print(f"lower bound over {VERDICT_SEEDS} seeds: min {min(lows):+.4f}, "
+              f"max {max(lows):+.4f}, clears zero {cleared}/{VERDICT_SEEDS}")
+        if cleared not in (0, VERDICT_SEEDS):
+            print("On the boundary: the verdict flips with the bootstrap seed. Report the "
+                  "margin and this spread, not a pass/fail.")
+            return low, high
+    print(win if low > 0 else tie)
+    return low, high
+
+
 def paired_interval(pred_a, pred_b, y, groups, n_boot=1000, seed=0):
     """Bootstrap whole groups; return the 95% interval on rho(a) - rho(b)."""
     rng = np.random.default_rng(seed)
@@ -203,12 +227,11 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
           f"{np.mean(null):+.4f} +/- {np.std(null):.4f}")
 
     a, b = "Evo probe (blocks.26.mlp.l3 layer)", "DNA word counts (84 features)"
-    lo, hi = paired_interval(preds[a], preds[b], y, g)
     got = dict((r[0], r[1]) for r in rows)
-    print(f"\nprobe minus word counts: {got[a] - got[b]:+.4f}  "
-          f"95% interval [{lo:+.4f}, {hi:+.4f}]")
-    print("The information is in there, and it beats word counts." if lo > 0 else
-          "No evidence Evo's representations add anything over word counts.")
+    print()
+    report_margin(preds[a], preds[b], y, g, got[a] - got[b],
+                  "The information is in there, and it beats word counts.",
+                  "No evidence Evo's representations add anything over word counts.")
 
 
 def main():

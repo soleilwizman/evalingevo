@@ -587,12 +587,13 @@ def single_variant_report(df, n_boot=1000, seed=0):
             "scrambled_join_would_give": float(df.s_wt.std() * np.sqrt(2))}
 
 
-def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=1000, seed=0):
+def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=1000, seed=0,
+                     label="Evo 2"):
     """Element-level baselines: GC and k-mer counts against the model likelihood."""
     figure, axes = plt.subplots(1, 4, figsize=(17, 4.2))
     panels = ((gc, "GC fraction of the 200-mer", "GC content"),
               (predictions["kmer_1_2_3"], "out-of-fold prediction", "1/2/3-mer counts"),
-              (model, "Evo 2 log-likelihood", "Evo 2 likelihood"))
+              (model, f"{label} log-likelihood", f"{label}\nlikelihood"))
     for axis, (x, xlabel, title) in zip(axes, panels):
         axis.scatter(x, y, s=6, alpha=0.25, linewidths=0, color="#3b6ea5")
         axis.set_xlabel(xlabel)
@@ -600,7 +601,7 @@ def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=
     axes[0].set_ylabel("measured reference activity (log2 RNA/DNA)")
 
     order = ["kmer_1_2_3", "gc", "model"]
-    labels = ["1/2/3-mer\ncounts", "GC\ncontent", "Evo 2\nlikelihood"]
+    labels = ["1/2/3-mer\ncounts", "GC\ncontent", f"{label}\nlikelihood"]
     values, lows, highs = [], [], []
     for name in order:
         prediction = predictions[name]
@@ -617,14 +618,15 @@ def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=
     axes[3].set_ylim(min(0, min(values)) - 0.05, max(values) + 0.09)
     for axis in axes:
         axis.spines[["top", "right"]].set_visible(False)
-    figure.suptitle(f"Predicting enhancer activity from the same 200 bases (n = {len(y)} elements)", y=1.02)
+    figure.suptitle(f"{label}: predicting enhancer activity from the same 200 bases "
+                    f"(n = {len(y)} elements)", y=1.02)
     figure.tight_layout()
     figure.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(figure)
     return str(path)
 
 
-def element_report(df, folds=5, n_boot=1000, seed=0, plot_path=None):
+def element_report(df, folds=5, n_boot=1000, seed=0, plot_path=None, label="Evo 2"):
     elements = (df.dropna(subset=["refref_Log2FC"]).drop_duplicates("seq_wt")
                   [["seq_wt", "s_wt", "refref_Log2FC", "refref_active", "group_id"]].reset_index(drop=True))
     if elements.groupby("seq_wt").group_id.nunique().gt(1).any():
@@ -645,7 +647,8 @@ def element_report(df, folds=5, n_boot=1000, seed=0, plot_path=None):
               "model": out_of_fold_linear(model, y, groups, folds, seed=seed),
               "kmer_1_2_3": out_of_fold_linear(kmers, y, groups, folds, ridge=True, seed=seed),
               "training_mean": mean_prediction}
-    plot = make_element_plot(elements, y, gc, model, fitted, groups, plot_path, n_boot, seed) if plot_path else None
+    plot = make_element_plot(elements, y, gc, model, fitted, groups, plot_path, n_boot, seed,
+                             label) if plot_path else None
 
     return {"n_elements": int(len(elements)), "n_active": int(active.sum()), "plot": plot,
             "raw_spearman": {
@@ -724,13 +727,13 @@ def precision_strata(df, keeps=(1.0, 0.75, 0.5, 0.25)):
     return rows
 
 
-def audit_analyses(df, audit_path, folds=5, n_boot=1000, seed=0, plot_path=None):
+def audit_analyses(df, audit_path, folds=5, n_boot=1000, seed=0, plot_path=None, label="Evo 2"):
     """Everything that needs the paper's labels and raw element activity."""
     joined = join_audit(df, audit_path)
     return {"audit": str(audit_path),
             "reproduction": reproduction_check(joined),
             "single_variants": single_variant_report(joined, n_boot, seed),
-            "elements": element_report(joined, folds, n_boot, seed, plot_path),
+            "elements": element_report(joined, folds, n_boot, seed, plot_path, label),
             "detection": detection_report(joined, folds, n_boot, seed),
             "precision_strata": precision_strata(joined),
             "libraries": joined.pair_id.str.split("|").str[0].str.split(";").str[-1].value_counts().to_dict()}
@@ -775,7 +778,8 @@ def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_
         mask = np.isfinite(se) & (se > 0) & (df.epsilon.abs() > 1.96 * se)
         result["exploratory_source_SE_subset"] = metrics(df.epsilon[mask], df.model_interaction[mask], threshold)
     if audit and Path(audit).exists():
-        result["audit_analyses"] = audit_analyses(df, audit, folds, n_boot, seed, out / "elements_gc_kmer.png")
+        result["audit_analyses"] = audit_analyses(df, audit, folds, n_boot, seed,
+                                                  out / "elements_gc_kmer.png", label)
     elif audit:
         result["audit_analyses"] = f"skipped, {audit} not found"
     (out / "metrics.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
