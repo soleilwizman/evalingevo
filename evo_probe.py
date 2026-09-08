@@ -179,11 +179,13 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     gc = np.array([[(s.count("G") + s.count("C")) / len(s)] for s in seqs])
     km = kmers(seqs)
 
+    probe_name = f"Evo hidden layer {meta['layer']} (probe)"
     preds, rows = {}, []
     for name, feat in [("Evo score (1 feature)", el[["s_wt"]].values),
                        ("GC content (1 feature)", gc),
                        ("DNA word counts (84 features)", km),
-                       ("Evo hidden layer (probe)", X)]:
+                       (probe_name, X),
+                       (f"{probe_name} + word counts", np.hstack([X, km]))]:
         preds[name] = out_of_fold(feat, y, g, folds)
         rows.append((name, spearmanr(preds[name], y).statistic,
                      float(np.sqrt(np.mean((preds[name] - y) ** 2)))))
@@ -202,7 +204,7 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     print(f"\nnoise floor from {n_permutations} label permutations: "
           f"{np.mean(null):+.4f} +/- {np.std(null):.4f}")
 
-    a, b = "Evo probe (blocks.26.mlp.l3 layer)", "DNA word counts (84 features)"
+    a, b = probe_name, "DNA word counts (84 features)"
     lo, hi = paired_interval(preds[a], preds[b], y, g)
     got = dict((r[0], r[1]) for r in rows)
     print(f"\nprobe minus word counts: {got[a] - got[b]:+.4f}  "

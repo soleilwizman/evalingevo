@@ -1,0 +1,93 @@
+{
+  "n": 5666,
+  "target": "measured log2 effect of one substitution",
+  "protocol": "grouped five-fold shuffled seed 0; ridge for multi-column features; 95% interval resamples whole region groups",
+  "kmer_note": "the k-mer bar is the delta, counts in the alternate sequence minus the reference, which for one substitution is the words made and broken; absolute counts give -0.035",
+  "readouts": [
+    {
+      "label": "Evo 2 score",
+      "kind": "likelihood",
+      "spearman": -0.013901254252054263,
+      "ci": [
+        -0.043248283962995404,
+        0.016662302349448432
+      ],
+      "features": 1
+    },
+    {
+      "label": "NTv3 100M score",
+      "kind": "likelihood",
+      "spearman": 0.03183449912312418,
+      "ci": [
+        0.004892644631132226,
+        0.060640876955367774
+      ],
+      "features": 1
+    },
+    {
+      "label": "NTv3 650M score",
+      "kind": "likelihood",
+      "features": 1,
+      "spearman": -0.020211805526347,
+      "ci": [
+        -0.049688973481330646,
+        0.009031387712241549
+      ],
+      "source": "results/ntv3_650m_pre/single_variant.json"
+    },
+    {
+      "label": "GC content",
+      "kind": "baseline",
+      "spearman": -0.023993549217283455,
+      "ci": [
+        -0.05478902394092087,
+        0.007619061780222658
+      ],
+      "features": 1
+    },
+    {
+      "label": "1/2/3-mer delta",
+      "kind": "baseline",
+      "spearman": 0.17685510370295074,
+      "ci": [
+        0.146697982151155,
+        0.20436569169636654
+      ],
+      "features": 84
+    },
+    {
+      "label": "NTv3 100M probe",
+      "kind": "probe",
+      "features": 768,
+      "spearman": 0.11612871690459109,
+      "ci": [
+        0.08636185335521863,
+        0.14556742037575848
+      ],
+      "n": 5666,
+      "source": "results/ntv3_100m_variants/variant_probe.json"
+    },
+    {
+      "label": "NTv3 650M probe",
+      "kind": "probe",
+      "features": 1536,
+      "spearman": 0.09475148650627147,
+      "ci": [
+        0.0678590670927861,
+        0.12014783348651865
+      ],
+      "n": 5666,
+      "source": "results/ntv3_650m_variants/variant_probe.json"
+    },
+    {
+      "label": "Evo 2 probe",
+      "kind": "probe",
+      "features": null,
+      "spearman": 0.1681,
+      "ci": null,
+      "n": 5428,
+      "other_protocol": true,
+      "source": "results/vp_evo2/probe.txt"
+    }
+  ]
+}
