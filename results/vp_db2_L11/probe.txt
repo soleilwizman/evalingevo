@@ -1,0 +1,13 @@
+n=5428  DNABERT-2 block 11 of 12  width 768  target signed
+pooled over tokens, 40.6 per sequence, grouped 5-fold seed 0
+measurement reliability 0.7346, so no predictor of the signed effect can exceed 0.8571
+
+                                     Spearman     RMSE   within-element
+variant position + side (2)          -0.0368   0.4095   0.491
+k-mer difference (84)                +0.1735   0.4035   0.556
+reference embedding only (control)   -0.0106   0.4110   0.497
+difference, mean pooled              +0.0885   0.4088   0.518
+difference, at the variant unit      +0.0748   0.4096   0.523
+predict the mean                     +0.0000   0.4094   0.500
+
+within-element column: 5585 pairs sharing an element, ranked on which variant matters more. Chance is 0.500 and knowing the element cannot help, so this is the variant question on its own.
