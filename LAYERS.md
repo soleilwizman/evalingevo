@@ -31,35 +31,46 @@ element embeddings above. Both sides come from the same layer within a model.
 `vp_evo2` holds no matrices, only derived tables, so it cannot be refitted under
 the current protocol. Its number is carried with a flag, not merged in.
 
-## Two directories that are NOT interchangeable with the above
+## The 650M layer sweep
 
-`results/ntv3_650m_probe` records `layer: "hidden_states[-4]"`, not block 11. Same
-checkpoint and width as `ntv3_650m_final`, different depth. Do not treat the two
-as the same readout.
+`results/ntv3_650m_sweep` holds 26 matrices, `X_mean_L0.npy` through `X_mean_L25.npy`.
+They are the model's `hidden_states` in order, not the 12 transformer blocks alone:
+NTv3 650M has 7 conv stages, 12 transformer blocks and 7 deconv stages, which is 26.
+Two facts pin the map. `python3 scripts/ntv3_unet.py list --offline --num-layers 12`
+prints it from the architecture, and `X_mean_L25.npy` is bit-identical to
+`results/ntv3_650m_deconv/X_mean.npy`, whose `meta.json` names `deconv_7` (max abs
+diff 0.0).
 
-`results/ntv3_650m_sweep` is unusable as committed, for two reasons.
+| sweep index | stage | positions per 256-token input |
+|---|---|---|
+| L0 to L6 | `conv_1` to `conv_7` | 256, 128, 64, 32, 16, 8, 4 |
+| L7 to L18 | `transformer_1` to `transformer_12` | 2 |
+| L19 to L25 | `deconv_1` to `deconv_7` | 4, 8, 16, 32, 64, 128, 256 |
 
-Its `meta.json` records `layers: [0..25]` and 26 matrices are present, but the
-650M model has 12 transformer blocks. `find_layers` in `ntv3_sweep.py` selects
-the *largest* contiguous module stack it can find, not necessarily the blocks,
-and it prints the module names to stdout while writing only indices to
-`meta.json`. The log from the run that produced these matrices (`sweep650.log`,
-recoverable from commit e1d359d) carries no layer-name line, so **what L0 through
-L25 are is not recorded anywhere in the repository.** A later run under the
-current script did print names and found 12 layers under `core.transformer_blocks`
-(`sweep650_named.log`, same commit), but those are not the committed matrices.
+`results/ntv3_650m_sweep/layer_curve.txt` is the probe over that sweep on the same
+folds and k-mer baseline (+0.4560) as every other element probe. L18 there is the
+same stage as `results/ntv3_650m_final` (`transformer_11` is zero-indexed, block 12
+of 12 in the map above).
 
-18 of the 26 matrices contain non-finite values. Checked directly:
+Layers 4 through 21 are 100% non-finite in float32: `conv_5` to `conv_7`, every
+transformer block, and `deconv_1` to `deconv_3`. That is corruption rather than a
+model property, because `deconv_4` (L22) is finite while the `deconv_3` it is
+computed from is not, and because `results/ntv3_650m_final` captures the last
+transformer block through a forward hook with finite values. The usable layers are
+L0 to L3 and L22 to L25. The numbers that matter, all from `layer_curve.txt`:
 
-    non-finite: layers 4-21
-    usable:     layers 0, 1, 2, 3, 22, 23, 24, 25
+| layer | rho | margin vs k-mers |
+|---|---|---|
+| L1 `conv_2` | +0.5655 | +0.1094 [+0.0808, +0.1382] |
+| L2 `conv_3` | +0.5607 | |
+| L0 `conv_1` | +0.5533 | |
+| L24 `deconv_6` | +0.4983 | |
+| L25 `deconv_7` | +0.4847 | +0.0287 [+0.0007, +0.0564], on the boundary |
 
-`sweep650.log` shows the run scoring layers 0, 1 and 2 at +0.5533, +0.5655 and
-+0.5607 against a k-mer baseline of +0.4560, then failing at layer 3 with
-"features contain NaN or infinity". Those three numbers are higher than every
-readout in the committed benchmark, including the Evo 2 element probe at +0.5051.
-They should not be quoted: the layers are unidentified and the run they come from
-did not complete.
+L1 was chosen after seeing the curve, so its margin is optimistic, but the lower
+bound is far from zero. Re-running `scripts/ntv3_sweep.py` would fill in the 18
+missing layers; nothing above the bottleneck has been measured for 100M at all.
 
-Re-running `ntv3_sweep.py` under the current script would fix both problems at
-once, since it names the layers it captures.
+The two `hidden_states[-4]` directories that used to sit beside these
+(`results/ntv3_probe`, `results/ntv3_650m_probe`) were `deconv_4` reads, 32 positions
+at 8x downsampling. Nothing quoted them and they have been removed.

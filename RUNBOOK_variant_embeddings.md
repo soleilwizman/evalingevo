@@ -1,25 +1,26 @@
 # Runbook: variant-level embeddings on a GPU
 
-The committed embeddings cover the 2,595 reference 200-mers and **none** of the
-5,428 variant sequences, so no probe of a variant effect is possible today.
-This is the GPU work that unblocks it. Everything downstream is CPU and already
-written and tested.
+The committed embeddings cover the 2,595 reference 200-mers and, for the two NTv3
+checkpoints, the 5,428 variant sequences as well (`results/ntv3_100m_variants`,
+`results/ntv3_650m_variants`, matrices included). Evo 2 has no variant matrices:
+`results/vp_evo2` holds derived tables only, so the Evo 2 run below is the one that
+is still open. Everything downstream is CPU and already written.
 
-Three runs, 5,428 sequences each: the variant sequences only. The references
+One run per model, 5,428 sequences each: the variant sequences only. The references
 already exist and get reused, and `variant_probe.py` refuses to subtract two
 directories unless their `meta.json` name the same checkpoint, layer and
 revision.
 
-| model | variant embeddings | reference embeddings (already committed) |
+| model | variant embeddings | reference embeddings (committed) |
 |---|---|---|
-| Evo 2 7B, `blocks.26.mlp.l3` | `results/evo_variants` | `results/evo_probe` |
-| NTv3 100M, block 5 | `results/ntv3_100m_variants` | `results/ntv3_100m_final` |
-| NTv3 650M, block 11 | `results/ntv3_650m_variants` | `results/ntv3_650m_final` |
+| Evo 2 7B, `blocks.26.mlp.l3` | `results/evo_variants` (not yet run) | `results/evo_probe` |
+| NTv3 100M, block 5 | `results/ntv3_100m_variants` (committed) | `results/ntv3_100m_final` |
+| NTv3 650M, block 11 | `results/ntv3_650m_variants` (committed) | `results/ntv3_650m_final` |
 
 ## 0. Before you start
 
 ```bash
-git checkout claude/figures        # or wherever these scripts live
+cd evalingevo                       # every path below is relative to the repo root
 nvidia-smi                          # confirm the GPU and free VRAM
 df -h .                             # Evo 2 needs ~15 GB free for weights
 ```
@@ -33,10 +34,10 @@ any data-path problem before you spend time on the 7B model.
 pip install torch transformers
 huggingface-cli login               # the InstaDeepAI checkpoints are gated
 
-python3 embed_variants.py --backend ntv3 --out results/ntv3_100m_variants \
+python3 scripts/embed_variants.py --backend ntv3 --out results/ntv3_100m_variants \
     --checkpoint InstaDeepAI/NTv3_100M_pre --layer 5  --batch-size 16
 
-python3 embed_variants.py --backend ntv3 --out results/ntv3_650m_variants \
+python3 scripts/embed_variants.py --backend ntv3 --out results/ntv3_650m_variants \
     --checkpoint InstaDeepAI/NTv3_650M_pre --layer 11 --batch-size 8
 ```
 
@@ -49,7 +50,7 @@ of the 12-block 650M, matching the committed reference embeddings exactly.
 # the evo2 package is not on PyPI; it needs CUDA and builds its own kernels
 git clone https://github.com/ArcInstitute/evo2 && cd evo2 && pip install . && cd ..
 
-python3 embed_variants.py --backend evo2 --out results/evo_variants \
+python3 scripts/embed_variants.py --backend evo2 --out results/evo_variants \
     --checkpoint evo2_7b_base --layer blocks.26.mlp.l3 --batch-size 4
 ```
 
@@ -60,11 +61,11 @@ batch.
 ## 3. Probe (CPU, minutes)
 
 ```bash
-python3 variant_probe.py --embeddings results/ntv3_100m_variants \
+python3 scripts/variant_probe.py --embeddings results/ntv3_100m_variants \
     --reference results/ntv3_100m_final --label "NTv3 100M probe"
-python3 variant_probe.py --embeddings results/ntv3_650m_variants \
+python3 scripts/variant_probe.py --embeddings results/ntv3_650m_variants \
     --reference results/ntv3_650m_final --label "NTv3 650M probe"
-python3 variant_probe.py --embeddings results/evo_variants \
+python3 scripts/variant_probe.py --embeddings results/evo_variants \
     --reference results/evo_probe       --label "Evo 2 probe"
 ```
 
@@ -115,9 +116,9 @@ second look, probe a full-resolution layer instead of the transformer block.
 ## Sizes
 
 `X_mean.npy` and `X_last.npy` per run, at 5,428 rows: NTv3 100M ~17 MB each,
-650M ~33 MB each, Evo 2 ~89 MB each. `.gitignore` excludes `results/*_variants/X_*.npy` so a
-13 GB model's output does not land in git by accident. Commit the JSON and the
-`sequences.csv`; keep the matrices out or put them in LFS.
+650M ~33 MB each, Evo 2 ~89 MB each. The NTv3 matrices are committed and
+`single_variant_spearman.py` reads them. The Evo 2 pair would add ~180 MB to a
+history that already carries 470 MB of matrices; decide before committing it.
 
 Add `--include-double` to any run to also embed the AB sequences, which is what
 a later interaction probe would need. It costs ~35% more time.

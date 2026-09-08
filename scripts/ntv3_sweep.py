@@ -5,7 +5,7 @@ Self-contained: does its own all-layer embed, then fits each layer on CPU.
 Reuses evo_probe's element table, folds and ridge fit, so every number here is
 comparable with the Evo 2 probe.
 
-    python3 ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/ntv3_650m_sweep
+    python3 scripts/ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/ntv3_650m_sweep
 """
 
 import argparse

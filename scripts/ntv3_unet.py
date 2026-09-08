@@ -29,12 +29,12 @@ excludes the pad positions by slicing, but the pads still influenced the activat
 And a 200 bp input reaches the bottleneck as 2 positions no matter which stage you read,
 so this recovers resolution, not context. For context you need longer inputs.
 
-    python3 ntv3_unet.py list  --checkpoint InstaDeepAI/NTv3_650M_pre --revision main
-    python3 ntv3_unet.py embed --representation deconv_final --revision main \
+    python3 scripts/ntv3_unet.py list  --checkpoint InstaDeepAI/NTv3_650M_pre --revision main
+    python3 scripts/ntv3_unet.py embed --representation deconv_final --revision main \
         --checkpoint InstaDeepAI/NTv3_650M_pre --out results/ntv3_650m_deconv
-    python3 ntv3_unet.py embed --representation all_deconv --revision main \
+    python3 scripts/ntv3_unet.py embed --representation all_deconv --revision main \
         --checkpoint InstaDeepAI/NTv3_650M_pre --out results/ntv3_650m_deconv_sweep
-    python3 layer_curve.py results/ntv3_650m_deconv_sweep     # the whole up-slope
+    python3 scripts/layer_curve.py results/ntv3_650m_deconv_sweep     # the whole up-slope
 """
 
 import argparse

@@ -5,15 +5,15 @@ Writes the same CSV that ``evo_epistasis.py evaluate`` consumes, so the result
 runs through the identical recoding, noise ceiling, detection AUROC and element
 baselines as the Evo 2 and NTv3 results.
 
-    python3 dnabert2_score.py --quartets data/quartets.csv.gz \
+    python3 scripts/dnabert2_score.py --quartets data/quartets.csv.gz \
         --checkpoint zhihan1996/DNABERT-2-117M --revision <commit sha> \
         --output results/dnabert2_117m/dnabert2_scores.csv
 
-    python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
+    python3 scripts/evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
         --scores results/dnabert2_117m/dnabert2_scores.csv \
         --out results/dnabert2_117m --label "DNABERT-2 117M"
 
-    python3 single_variant.py --predictions results/dnabert2_117m/predictions.csv \
+    python3 scripts/single_variant.py --predictions results/dnabert2_117m/predictions.csv \
         --out results/dnabert2_117m/single_variant.json --label "DNABERT-2 117M"
 
 DNABERT-2 is a masked language model over a byte-pair vocabulary, so the score is

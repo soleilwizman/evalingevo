@@ -27,8 +27,8 @@ What cannot be drawn from the committed results is drawn as a gap, not left out:
   Evo 2 variant probe   embeddings never committed; carried from
                         results/vp_evo2/probe.txt, hatched, no interval
 
-    python3 eight_readouts.py --out results/figures/eight_readouts.png
-    python3 eight_readouts.py --redraw     # from the json beside the png
+    python3 scripts/eight_readouts.py --out results/figures/eight_readouts.png
+    python3 scripts/eight_readouts.py --redraw     # from the json beside the png
 """
 
 import argparse

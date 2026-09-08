@@ -152,7 +152,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     e = sub.add_parser("embed", help="GPU. Pool one hidden layer per element.")
-    e.add_argument("--out", default="results/ntv3_probe")
+    e.add_argument("--out", required=True)
     e.add_argument("--layer", type=int, default=11,
                    help="actual NTv3 transformer block index (default 11)")
     e.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
@@ -160,7 +160,7 @@ def main():
     e.add_argument("--batch-size", type=int, default=8)
 
     p = sub.add_parser("probe", help="CPU. Fit ridge on the saved embeddings.")
-    p.add_argument("--embeddings", default="results/ntv3_probe")
+    p.add_argument("--embeddings", default="results/ntv3_100m_final")
     p.add_argument("--pooling", choices=("mean", "last"), default="mean")
     p.add_argument("--folds", type=int, default=5)
 

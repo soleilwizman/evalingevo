@@ -8,7 +8,7 @@ four-haplotype contrast that reduces to one +1/-1 per pair, applied once in
 2. Which measurement-error ceiling goes with which coding?
 3. How much of the recoded positive shift survives when the true interaction is zero?
 
-Run:  python3 recoding_bias.py --quartets data/quartets.csv.gz --audit data/audit.csv.gz \
+Run:  python3 scripts/recoding_bias.py --quartets data/quartets.csv.gz --audit data/audit.csv.gz \
            --predictions results/evo2_7b_base/predictions.csv
 """
 

@@ -186,7 +186,7 @@ for pp in D.paragraphs[-5:]:
 D.core_properties.title='Understanding regulatory interactions with Evo 2'
 D.core_properties.subject='Project proposal MVP walkthrough and research plan'
 D.core_properties.author=''
-out=Path(__file__).resolve().parent/'final_render4'/'Evo2_regulatory_interactions_proposal_and_MVP.docx'
+out=Path(__file__).resolve().parent/'Evo2_regulatory_interactions_proposal_and_MVP.docx'
 out.parent.mkdir(exist_ok=True)
 D.save(out)
 print(out)

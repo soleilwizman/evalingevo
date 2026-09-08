@@ -13,7 +13,7 @@ variants. The allele recoding does not enter here at all; it exists only to put 
 four-haplotype contrast on the paper's convention, so every number below is on
 plain ref/alt coding.
 
-    python3 single_variant.py --predictions results/evo2_7b_base/predictions.csv \
+    python3 scripts/single_variant.py --predictions results/evo2_7b_base/predictions.csv \
         --out results/evo2_7b_base/single_variant.json --label "Evo 2 7B base"
 """
 

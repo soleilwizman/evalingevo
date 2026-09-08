@@ -2,16 +2,16 @@
 """Variant probe across model families, on one protocol.
 
     # GPU, once per model
-    python3 variant_probe.py embed --model evo2     --out results/vp_evo2
-    python3 variant_probe.py embed --model ntv3     --out results/vp_ntv3_100m \
+    python3 scripts/variant_probe.py embed --model evo2     --out results/vp_evo2
+    python3 scripts/variant_probe.py embed --model ntv3     --out results/vp_ntv3_100m \
         --checkpoint InstaDeepAI/NTv3_100M_pre
-    python3 variant_probe.py embed --model ntv3     --out results/vp_ntv3_650m \
+    python3 scripts/variant_probe.py embed --model ntv3     --out results/vp_ntv3_650m \
         --checkpoint InstaDeepAI/NTv3_650M_pre
-    python3 variant_probe.py embed --model dnabert2 --out results/vp_dnabert2
+    python3 scripts/variant_probe.py embed --model dnabert2 --out results/vp_dnabert2
 
     # CPU
-    python3 variant_probe.py probe   --embeddings results/vp_evo2
-    python3 variant_probe.py compare --embeddings results/vp_evo2 results/vp_ntv3_100m \
+    python3 scripts/variant_probe.py probe   --embeddings results/vp_evo2
+    python3 scripts/variant_probe.py compare --embeddings results/vp_evo2 results/vp_ntv3_100m \
         results/vp_ntv3_650m results/vp_dnabert2
 
 Each model is read in its OWN units, not forced into a shared one.

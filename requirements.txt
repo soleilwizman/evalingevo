@@ -1,4 +1,4 @@
-# CPU analysis: evo_epistasis.py evaluate, *_probe.py probe, layer_curve.py
+# CPU analysis: scripts/evo_epistasis.py evaluate, scripts/*_probe.py probe, scripts/layer_curve.py
 numpy
 pandas
 scipy
@@ -7,7 +7,7 @@ matplotlib
 # GPU scoring and embedding, not needed for the analysis above.
 # torch and transformers for NTv3; the evo2 package from
 # https://github.com/ArcInstitute/evo2 for Evo 2; torch, transformers 4.x and
-# einops for DNABERT-2 (dnabert2_score.py, variant_probe.py --model dnabert2).
+# einops for DNABERT-2 (scripts/dnabert2_score.py, scripts/variant_probe.py --model dnabert2).
 # Exact versions behind the committed results are recorded in
 # results/evo2_7b_base/score_metadata.json and
 # results/ntv3_100m_pre/ntv3_scores.meta.json.

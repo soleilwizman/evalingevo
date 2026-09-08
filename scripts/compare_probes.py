@@ -7,7 +7,7 @@ table under the same folds, then resamples whole region groups for a 95%
 interval on the difference. It also refits one probe under several fold draws,
 so the reader can see how much the number moves for no reason at all.
 
-    python3 compare_probes.py --a results/ntv3_100m_final --b results/ntv3_650m_final \
+    python3 scripts/compare_probes.py --a results/ntv3_100m_final --b results/ntv3_650m_final \
         --label-a "NTv3 100M probe" --label-b "NTv3 650M probe" \
         --out results/probe_comparison.json
 """

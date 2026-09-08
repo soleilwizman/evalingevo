@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A benchmark of frozen genomic language models (Evo 2 7B, Nucleotide Transformer v3) against
-measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-one flat Python
-scripts, no package, no test suite, no linter config. The README is the paper draft and its
-numbers must be kept in sync with `results/*/metrics.json`.
+measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-three flat Python
+scripts in `scripts/`, no package, no test suite, no linter config. Run every script from the repo
+root: they import each other by bare module name (which works because `python3 scripts/x.py` puts
+`scripts/` first on `sys.path`) and open `data/` and `results/` by relative path. The README is
+the paper draft and its numbers must be kept in sync with `results/*/metrics.json`.
 `docs/proposal/` holds the proposal PDF, its `.docx`, and the python-docx script that builds it;
 nothing in the pipeline reads it.
 
@@ -18,37 +20,37 @@ pip install numpy pandas scipy scikit-learn matplotlib     # everything below ex
 
 # Regenerate every Evo 2 number in README Section 4 from the cached scores (CPU, a few minutes).
 # Verified to reproduce the committed metrics.json to within 1e-4 on every value.
-python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
+python3 scripts/evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
     --scores results/evo2_7b_base/evo_scores.csv --out results/evo2_7b_base --label "Evo 2 7B base"
 
 # Same pipeline, NTv3 scores
-python3 evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
+python3 scripts/evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
     --scores results/ntv3_100m_pre/ntv3_scores.csv --out results/ntv3_100m_pre --label "NTv3 100M pre"
 
 # Element-level probes on the committed embeddings (CPU, minutes; write the output to
 # probe.txt beside the .npy files, which is where the committed results live)
-python3 evo_probe.py probe --embeddings results/evo_probe --pooling mean
-python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
-python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
-python3 recoding_bias.py                              # what recoding changes, and the zero-interaction null
-python3 model_comparison.py                           # one cross-model figure, same-protocol panels only
-python3 eight_readouts.py                             # two panels, eight readouts each: element activity and single-variant effect
-python3 probe_interval.py results/<dir>                # margin + interval only, ~30s, skips the slow null
-python3 ntv3_unet.py list --offline --num-layers 12    # which hidden_states index is per-base
+python3 scripts/evo_probe.py probe --embeddings results/evo_probe --pooling mean
+python3 scripts/ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
+python3 scripts/layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
+python3 scripts/recoding_bias.py                              # what recoding changes, and the zero-interaction null
+python3 scripts/model_comparison.py                           # one cross-model figure, same-protocol panels only
+python3 scripts/eight_readouts.py                             # two panels, eight readouts each: element activity and single-variant effect
+python3 scripts/probe_interval.py results/<dir>                # margin + interval only, ~30s, skips the slow null
+python3 scripts/ntv3_unet.py list --offline --num-layers 12    # which hidden_states index is per-base
 
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
-python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
-python3 ntv3_score.py --quartets data/quartets.csv.gz --checkpoint NTv3_100M_pre --revision main --output results/<dir>/ntv3_scores.csv
-python3 dnabert2_score.py --quartets data/quartets.csv.gz --revision <sha> --output results/dnabert2_117m/dnabert2_scores.csv   # needs einops, transformers 4.x
-python3 evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
-python3 ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
-python3 ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass
+python3 scripts/evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
+python3 scripts/ntv3_score.py --quartets data/quartets.csv.gz --checkpoint NTv3_100M_pre --revision main --output results/<dir>/ntv3_scores.csv
+python3 scripts/dnabert2_score.py --quartets data/quartets.csv.gz --revision <sha> --output results/dnabert2_117m/dnabert2_scores.csv   # needs einops, transformers 4.x
+python3 scripts/evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
+python3 scripts/ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
+python3 scripts/ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass
 
 # Rebuild the benchmark from the Zenodo release (only if the data files change)
-python3 evo_epistasis.py prepare-siraj --windows <all_windows.tsv> --code-zip <code.zip> --out data
+python3 scripts/evo_epistasis.py prepare-siraj --windows <all_windows.tsv> --code-zip <code.zip> --out data
 ```
 
-There are no tests; `python3 -m py_compile *.py` is the only static check. To smoke-test a probe
+There are no tests; `python3 -m py_compile scripts/*.py` is the only static check. To smoke-test a probe
 change without a GPU, point `--embeddings` at a scratch directory holding a random `X_mean.npy`,
 a copy of any committed `elements.csv`, and a `meta.json` with a `layer` key.
 
@@ -104,7 +106,10 @@ loads.
 `<name>.meta.json` records checkpoint, revision, score definition, code hash and package
 versions; if the meta on disk differs from the current configuration the run refuses to continue,
 so any changed configuration needs a new `--output` path. `--revision` is mandatory for model
-backends. Every sequence is scored forward and reverse-complement and the two are averaged. The
+backends. The meta's `code_sha256` is part of that comparison, and `scripts/ntv3_score.py` and
+`scripts/embed_variants.py` are byte-identical to the versions the committed metas record (their
+usage docstrings still say `python3 ntv3_score.py` for that reason). Any edit to either file means
+the committed caches refuse to resume; they are complete, so that only matters for a new run. Every sequence is scored forward and reverse-complement and the two are averaged. The
 embedding code does not average orientations.
 
 ## Cross-validation and baselines
@@ -184,8 +189,10 @@ quote that line. The defensible claim is that 650M read per-base is level with 1
 and clearly above the same checkpoint read at the bottleneck. `probe_interval.py` now does this check by
 default: when the 95% lower bound lands within 0.01 of zero it re-bootstraps under 10 seeds, prints
 the spread, and exits nonzero instead of returning a verdict. A clear margin still answers in one
-draw (Evo's +0.0490 [+0.0150, +0.0809] does not escalate). The same binary verdict line in
-`evo_probe.probe` and `ntv3_probe.probe` has no such guard, so near zero it is decided by seed 0.
+draw (Evo's +0.0490 [+0.0150, +0.0809] does not escalate). `evo_probe.probe` and `ntv3_probe.probe` share
+that guard through `report_margin` in `evo_probe.py`, which prints the 10-seed spread and withholds
+the verdict when the seeds disagree. (A merge once dropped `report_margin` while leaving the NTv3
+call in place, so `ntv3_probe.py` failed at import; check it still exists before trusting a probe.txt.)
 
 **`deconv_7` is not the best place to read NTv3, and `results/ntv3_650m_sweep` already held the
 answer.** `X_mean_L25.npy` in that sweep is bit-identical to `results/ntv3_650m_deconv/X_mean.npy`
