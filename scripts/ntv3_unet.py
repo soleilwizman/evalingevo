@@ -4,7 +4,7 @@
 Why this exists: `ntv3_probe.py embed` hooks `core.transformer_blocks.<i>`, which sits
 at the bottom of the U-Net. With 7 downsamples a 200-mer padded to 256 is *2 positions*
 there, so "mean pooling" averages two vectors and per-base resolution is gone. That is
-fine for the 8 kb inputs the model was built for and useless for a 200 bp oligo.
+coarse for a 200 bp oligo; its utility is an empirical question, not a shape test.
 
 The deconv tower puts the resolution back. Verified against the checkpoint's own remote
 code (`InstaDeepAI/ntv3_base_model--modeling_ntv3_pretrained`), `Core.forward` appends to
@@ -42,26 +42,20 @@ import json
 from pathlib import Path
 
 import numpy as np
-
-from evo_probe import elements, AUDIT, PRED
-from ntv3_probe import MULTIPLE, pad_to_multiple
+from artifact_io import source_hashes
+from element_data import elements
+from evo_probe import AUDIT, PRED
+from model_runtime import POOLING_PROTOCOL
+from model_runtime import tokenize_ntv3 as tokenize
+from ntv3_probe import MULTIPLE
 
 DEFAULT_CHECKPOINT = "InstaDeepAI/NTv3_650M_pre"
 
 
 def load(checkpoint, revision, device):
-    import torch
-    from transformers import AutoModelForMaskedLM, AutoTokenizer
+    from model_runtime import load_hf
 
-    kwargs = {"trust_remote_code": True}
-    if revision:
-        kwargs["revision"] = revision
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint, **kwargs)
-    model = AutoModelForMaskedLM.from_pretrained(checkpoint, **kwargs)
-    # bfloat16 weights collide with NTv3's float32 internals under transformers 5
-    model = model.float().to(device).eval()
-    if not hasattr(model, "core"):
-        raise SystemExit("checkpoint does not expose .core; not an NTv3 pretrained model")
+    tokenizer, model, _ = load_hf(checkpoint, revision, device)
     return tokenizer, model
 
 
@@ -75,17 +69,19 @@ def stage_names(model, padded_length):
     n_conv = len(core.conv_tower_blocks)
     n_transformer = len(core.transformer_blocks)
     n_deconv = len(core.deconv_tower_blocks)
-    bottleneck = padded_length // (2 ** n_conv)
+    bottleneck = padded_length // (2**n_conv)
     if bottleneck < 1:
-        raise SystemExit(f"{padded_length} bp cannot survive {n_conv} halvings; "
-                         f"use an input of at least {2 ** n_conv} bp")
+        raise SystemExit(
+            f"{padded_length} bp cannot survive {n_conv} halvings; "
+            f"use an input of at least {2**n_conv} bp"
+        )
 
     stages = []
-    for i in range(n_conv):                       # taken before each avg_pool
-        stages.append((f"conv_{i + 1}", padded_length // (2 ** i)))
+    for i in range(n_conv):  # taken before each avg_pool
+        stages.append((f"conv_{i + 1}", padded_length // (2**i)))
     for i in range(n_transformer):
         stages.append((f"transformer_{i + 1}", bottleneck))
-    for i in range(n_deconv):                     # after upsample + skip
+    for i in range(n_deconv):  # after upsample + skip
         stages.append((f"deconv_{i + 1}", bottleneck * (2 ** (i + 1))))
     return stages
 
@@ -98,57 +94,23 @@ def hidden_states(model, ids, padded_length):
     states = out["hidden_states"]
     stages = stage_names(model, padded_length)
     if len(states) != len(stages):
-        raise SystemExit(f"expected {len(stages)} hidden states, got {len(states)}; "
-                         "the checkpoint's remote code has changed, re-read it")
+        raise SystemExit(
+            f"expected {len(stages)} hidden states, got {len(states)}; "
+            "the checkpoint's remote code has changed, re-read it"
+        )
     for (name, expected), tensor in zip(stages, states):
         if tensor.shape[1] != expected:
             raise SystemExit(f"{name}: expected {expected} positions, got {tensor.shape[1]}")
     return dict(zip([s[0] for s in stages], states)), stages
 
 
-def tokenize(tokenizer, sequences, device):
-    """Model card's recipe: no special tokens, N-pad to a multiple of 128."""
-    import torch
-
-    padded, lefts = zip(*[pad_to_multiple(s) for s in sequences])
-    if len(set(lefts)) != 1 or len(set(map(len, padded))) != 1:
-        raise SystemExit("batch mixes sequence lengths; group by length first")
-    rows = [tokenizer(p, add_special_tokens=False)["input_ids"] for p in padded]
-    if any(len(r) != len(padded[0]) for r in rows):
-        raise SystemExit("tokenizer is not one token per character on this batch")
-    if len(padded[0]) % MULTIPLE:
-        raise SystemExit(f"padded length {len(padded[0])} is not a multiple of {MULTIPLE}")
-    return torch.tensor(rows, dtype=torch.long, device=device), lefts[0], len(padded[0])
-
-
 def pool(tensor, left, real_length, padded_length, upsample="none"):
-    """Mean and last over the real bases when the stage is at per-base resolution.
+    from model_runtime import pool_real_bases
 
-    A stage is per-base only when it has one position per input token; the deconv
-    output is aligned 1:1 with the tokens, which is what lets the LM head emit
-    per-base logits. Anywhere below that there is no way to say which positions are
-    the real sequence, so everything is pooled and the caller is told.
-
-    ``upsample="repeat"`` is BEND's convention for models coarser than one vector per
-    base: "we repeat each embedding vector to the length of the sequence represented
-    by its token" (github.com/frederikkemarin/BEND, ``upsample_embeddings=True``).
-    It adds no information; it makes shapes match so one probe can run on every model.
-    For a 200-mer padded to 256 the real bases split 100/100 across the two bottleneck
-    positions, so repeat-then-pool equals plain pooling to float precision. It changes
-    nothing for an element-level probe and matters only per position.
-    """
-    import torch
-
-    if upsample == "repeat" and tensor.shape[1] < padded_length:
-        if padded_length % tensor.shape[1]:
-            raise SystemExit(f"cannot repeat {tensor.shape[1]} positions to {padded_length}")
-        tensor = torch.repeat_interleave(tensor, padded_length // tensor.shape[1], dim=1)
-    per_base = tensor.shape[1] == padded_length
-    window = tensor[:, left:left + real_length, :] if per_base else tensor
-    values = window.float()
-    if not torch.isfinite(values).all():
-        raise SystemExit("non-finite activations in the selected stage")
-    return values.mean(1).cpu().numpy(), values[:, -1].cpu().numpy(), per_base
+    if upsample not in ("none", "repeat"):
+        raise ValueError("upsample must be none or repeat")
+    mean, last = pool_real_bases(tensor, left, real_length, padded_length)
+    return mean, last, True
 
 
 def run_list(args):
@@ -158,8 +120,7 @@ def run_list(args):
     probe_length = 200
     ids, left, padded_length = tokenize(tokenizer, ["ACGT" * (probe_length // 4)], args.device)
     states, stages = hidden_states(model, ids, padded_length)
-    print(f"{args.checkpoint}   {probe_length} bp padded to {padded_length}   "
-          f"left offset {left}\n")
+    print(f"{args.checkpoint}   {probe_length} bp padded to {padded_length}   left offset {left}\n")
     print(f"{'stage':<18}{'positions':>10}{'width':>8}   per-base?")
     for name, _ in stages:
         tensor = states[name]
@@ -173,30 +134,32 @@ def run_list_offline(args):
     without weights or a GPU. num_layers is 6 for the 100M and 12 for the 650M."""
     padded = -(-args.probe_length // MULTIPLE) * MULTIPLE
     left = (padded - args.probe_length) // 2
-    bottleneck = padded // 2 ** args.num_downsamples
-    rows = [(f"conv_{i + 1}", padded // 2 ** i) for i in range(args.num_downsamples)]
+    bottleneck = padded // 2**args.num_downsamples
+    rows = [(f"conv_{i + 1}", padded // 2**i) for i in range(args.num_downsamples)]
     rows += [(f"transformer_{i + 1}", bottleneck) for i in range(args.num_layers)]
-    rows += [(f"deconv_{i + 1}", bottleneck * 2 ** (i + 1))
-             for i in range(args.num_downsamples)]
-    print(f"num_layers {args.num_layers}, num_downsamples {args.num_downsamples}: "
-          f"{len(rows)} hidden states")
+    rows += [(f"deconv_{i + 1}", bottleneck * 2 ** (i + 1)) for i in range(args.num_downsamples)]
+    print(
+        f"num_layers {args.num_layers}, num_downsamples {args.num_downsamples}: "
+        f"{len(rows)} hidden states"
+    )
     print(f"{args.probe_length} bp padded to {padded}, left offset {left}\n")
     print(f"{'index':>6}  {'stage':<16}{'positions':>10}   resolution")
     for index, (name, length) in enumerate(rows):
         scope = "per-base" if length == padded else f"downsampled {padded // length}x"
-        print(f"{index:>6}  {name:<16}{length:>10}   {scope}   "
-              f"[{index - len(rows)}]")
-    print("\nhidden_states[-1] is the top of the U. variant_probe.py's NTv3 default "
-          "of layer=-4\nis the fourth deconv block, still downsampled.")
+        print(f"{index:>6}  {name:<16}{length:>10}   {scope}   [{index - len(rows)}]")
+    print(
+        "\nhidden_states[-1] is the top of the U and variant_probe.py's NTv3 default. "
+        "The former layer=-4 default is still downsampled."
+    )
 
 
 def run_embed(args):
-    import torch
 
     el = elements(args.pred, args.audit)
     if args.limit:
         el = el.head(args.limit)
-    out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
     tokenizer, model = load(args.checkpoint, args.revision, args.device)
 
     sequences = el.seq.tolist()
@@ -215,23 +178,26 @@ def run_embed(args):
     elif args.representation in available:
         wanted = [args.representation]
     else:
-        raise SystemExit(f"unknown representation {args.representation!r}; "
-                         f"choose from all_deconv, deconv_final, or {', '.join(available)}")
+        raise SystemExit(
+            f"unknown representation {args.representation!r}; "
+            f"choose from all_deconv, deconv_final, or {', '.join(available)}"
+        )
 
-    print(f"{len(el)} elements, {real_length} bp padded to {padded_length}, "
-          f"left offset {left}, stages {', '.join(wanted)}, device {args.device}")
+    print(
+        f"{len(el)} elements, {real_length} bp padded to {padded_length}, "
+        f"left offset {left}, stages {', '.join(wanted)}, device {args.device}"
+    )
 
     collected = {name: {"mean": [], "last": []} for name in wanted}
     per_base = {}
     for start in range(0, len(sequences), args.batch_size):
-        batch = sequences[start:start + args.batch_size]
+        batch = sequences[start : start + args.batch_size]
         ids, batch_left, batch_padded = tokenize(tokenizer, batch, args.device)
         if batch_left != left or batch_padded != padded_length:
             raise SystemExit("padding drifted between batches")
         states, _ = hidden_states(model, ids, padded_length)
         for name in wanted:
-            mean, last, flag = pool(states[name], left, real_length, padded_length,
-                                     args.upsample)
+            mean, last, flag = pool(states[name], left, real_length, padded_length, args.upsample)
             collected[name]["mean"].append(mean)
             collected[name]["last"].append(last)
             per_base[name] = flag
@@ -250,17 +216,32 @@ def run_embed(args):
 
     el.drop(columns=["seq"]).to_csv(out / "elements.csv", index=False)
     label = wanted[0] if not sweep else f"{wanted[0]}..{wanted[-1]}"
-    (out / "meta.json").write_text(json.dumps(
-        {"model": "ntv3", "checkpoint": args.checkpoint, "revision": args.revision,
-         "layer": f"{label} (U-Net deconv tower)" if label.startswith("deconv")
-                  else f"{label} (bottleneck)",
-         "representations": wanted, "width": widths[wanted[0]],
-         "n": int(len(el)), "padded_length": padded_length, "left_offset": left,
-         "real_length": real_length,
-         "pooled_over_real_bases_only": {n: per_base[n] for n in wanted},
-         "upsample": args.upsample,
-         "note": "NTv3 builds no attention mask, so N padding is attended even though "
-                 "pooling excludes those positions"}, indent=2) + "\n")
+    (out / "meta.json").write_text(
+        json.dumps(
+            {
+                "model": "ntv3",
+                "checkpoint": args.checkpoint,
+                "revision": args.revision,
+                "pooling_protocol": POOLING_PROTOCOL,
+                "source_sha256": source_hashes(),
+                "layer": f"{label} (U-Net deconv tower)"
+                if label.startswith("deconv")
+                else f"{label} (bottleneck)",
+                "representations": wanted,
+                "width": widths[wanted[0]],
+                "n": int(len(el)),
+                "padded_length": padded_length,
+                "left_offset": left,
+                "real_length": real_length,
+                "pooled_over_real_bases_only": {n: per_base[n] for n in wanted},
+                "upsample": args.upsample,
+                "note": "NTv3 builds no attention mask, so N padding is attended even though "
+                "pooling excludes those positions",
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     for name in wanted:
         scope = "real bases only" if per_base[name] else "all positions (below per-base)"
         print(f"  {name}: width {widths[name]}, pooled over {scope}")
@@ -268,35 +249,54 @@ def run_embed(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    common = lambda p: (
-        p.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT),
-        p.add_argument("--revision", default=None,
-                       help="required for a real run; pin the checkpoint commit"),
-        p.add_argument("--device", default="cuda:0"))
+    def common(p):
+        p.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+        p.add_argument(
+            "--revision",
+            default=None,
+            help="required for a real run; pin the checkpoint commit",
+        )
+        p.add_argument("--device", default="cuda:0")
 
     listing = sub.add_parser("list", help="print every stage of the U and its resolution")
     common(listing)
     listing.set_defaults(upsample="none")
-    listing.add_argument("--offline", action="store_true",
-                         help="print the index mapping from arithmetic, no weights needed")
-    listing.add_argument("--num-layers", type=int, default=12, dest="num_layers",
-                         help="6 for NTv3 100M, 12 for 650M (offline mode only)")
+    listing.add_argument(
+        "--offline",
+        action="store_true",
+        help="print the index mapping from arithmetic, no weights needed",
+    )
+    listing.add_argument(
+        "--num-layers",
+        type=int,
+        default=12,
+        dest="num_layers",
+        help="6 for NTv3 100M, 12 for 650M (offline mode only)",
+    )
     listing.add_argument("--num-downsamples", type=int, default=7, dest="num_downsamples")
     listing.add_argument("--probe-length", type=int, default=200, dest="probe_length")
 
     embed = sub.add_parser("embed", help="pool one stage (or the whole deconv tower)")
     common(embed)
-    embed.add_argument("--representation", default="deconv_final",
-                       help="deconv_final, all_deconv, deconv_<k>, transformer_<k>, conv_<k>")
+    embed.add_argument(
+        "--representation",
+        default="deconv_final",
+        help="deconv_final, all_deconv, deconv_<k>, transformer_<k>, conv_<k>",
+    )
     embed.add_argument("--out", default="results/ntv3_deconv")
     embed.add_argument("--batch-size", type=int, default=8, dest="batch_size")
-    embed.add_argument("--upsample", default="none", choices=("none", "repeat"),
-                       help="repeat = BEND's convention, repeat each vector to the span "
-                            "its token covers; a no-op for pooled element embeddings")
+    embed.add_argument(
+        "--upsample",
+        default="none",
+        choices=("none", "repeat"),
+        help="repeat = BEND's convention, repeat each vector to the span "
+        "its token covers; a no-op for pooled element embeddings",
+    )
     embed.add_argument("--limit", type=int, default=0, help="smoke test on the first N elements")
     embed.add_argument("--pred", default=PRED)
     embed.add_argument("--audit", default=AUDIT)

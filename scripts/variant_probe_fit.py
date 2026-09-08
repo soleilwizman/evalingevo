@@ -11,16 +11,20 @@ and the baselines it is compared against are scored on the same rows.
     python3 scripts/variant_probe_fit.py --variants results/ntv3_650m_variants \
         --references results/ntv3_650m_final --label "NTv3 650M probe"
 """
-import argparse, hashlib, json
+
+import argparse
+import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
-
-from evo_epistasis import gc_fraction, group_boot, out_of_fold_linear
+from artifact_io import load_matrix, matched_embedding_metadata
+from benchmark_stats import gc_fraction, group_boot
 from evo_probe import kmers
+from scipy.stats import spearmanr
 from single_variant import single_variants
+from validation import PROTOCOL, out_of_fold_linear
 
 
 def sha(seq):
@@ -40,14 +44,11 @@ def main():
     a = ap.parse_args()
 
     var, ref = Path(a.variants), Path(a.references)
-    Xv = np.load(var / f"X_{a.pooling}.npy")
+    matched_embedding_metadata(var, ref)
     sv = pd.read_csv(var / "sequences.csv")
-    if len(sv) != len(Xv):
-        raise SystemExit(f"{var}: {len(sv)} rows but {len(Xv)} vectors")
-    Xr = np.load(ref / f"X_{a.pooling}.npy")
     sr = pd.read_csv(ref / "elements.csv")
-    if len(sr) != len(Xr):
-        raise SystemExit(f"{ref}: {len(sr)} rows but {len(Xr)} vectors")
+    Xv = load_matrix(var / f"X_{a.pooling}.npy", sv, ["sequence_id"])
+    Xr = load_matrix(ref / f"X_{a.pooling}.npy", sr, ["sequence_id"])
     if Xv.shape[1] != Xr.shape[1]:
         raise SystemExit(f"width mismatch: variants {Xv.shape[1]} vs references {Xr.shape[1]}")
     vi = {s: i for i, s in enumerate(sv.sequence_id)}
@@ -55,15 +56,13 @@ def main():
 
     table = single_variants("results/evo2_7b_base/predictions.csv")
     table = table.assign(ref_id=[sha(s) for s in table.seq_ref])
-    have = np.array([(v in vi) and (r in ri)
-                     for v, r in zip(table.sequence_id, table.ref_id)])
+    have = np.array([(v in vi) and (r in ri) for v, r in zip(table.sequence_id, table.ref_id)])
     kept = table[have].reset_index(drop=True)
     print(f"{a.label}: {have.sum()} of {len(table)} variants have both vectors")
     if not have.any():
         raise SystemExit("no overlap between the variant and reference tables")
 
-    diff = np.stack([Xv[vi[v]] - Xr[ri[r]]
-                     for v, r in zip(kept.sequence_id, kept.ref_id)])
+    diff = np.stack([Xv[vi[v]] - Xr[ri[r]] for v, r in zip(kept.sequence_id, kept.ref_id)])
     refonly = np.stack([Xr[ri[r]] for r in kept.ref_id])
     y, g = kept.y.to_numpy(), kept.group_id.to_numpy()
     seqs, refs = kept.seq.tolist(), kept.seq_ref.tolist()
@@ -76,19 +75,32 @@ def main():
     ]
     # No likelihood row here on purpose: delta_score in this table is Evo 2's,
     # taken from the shared variant table, not the checkpoint being probed.
-    out = {"label": a.label, "n": int(have.sum()), "n_total": int(len(table)),
-           "pooling": a.pooling, "folds": a.folds, "seed": a.seed,
-           "variants": str(var), "references": str(ref),
-           "width": int(Xv.shape[1]), "readouts": []}
+    out = {
+        "label": a.label,
+        "n": int(have.sum()),
+        "n_total": int(len(table)),
+        "pooling": a.pooling,
+        "folds": a.folds,
+        "protocol": PROTOCOL,
+        "seed": a.seed,
+        "variants": str(var),
+        "references": str(ref),
+        "width": int(Xv.shape[1]),
+        "readouts": [],
+    }
     for name, feat, kind in rows:
-        pred = out_of_fold_linear(feat, y, g, a.folds,
-                                  ridge=feat.shape[1] > 1, seed=a.seed)
+        pred = out_of_fold_linear(feat, y, g, a.folds, ridge=feat.shape[1] > 1, seed=a.seed)
         rho = float(spearmanr(pred, y).statistic)
-        lo, hi = group_boot(g, lambda i: spearmanr(pred[i], y[i]).statistic,
-                            a.bootstrap, a.seed)
-        out["readouts"].append({"label": name, "kind": kind, "spearman": rho,
-                                "ci": [float(lo), float(hi)],
-                                "features": int(feat.shape[1])})
+        lo, hi = group_boot(g, lambda i: spearmanr(pred[i], y[i]).statistic, a.bootstrap, a.seed)
+        out["readouts"].append(
+            {
+                "label": name,
+                "kind": kind,
+                "spearman": rho,
+                "ci": [float(lo), float(hi)],
+                "features": int(feat.shape[1]),
+            }
+        )
         print(f"  {name:44} {rho:+.4f}  [{lo:+.4f}, {hi:+.4f}]", flush=True)
 
     path = Path(a.out) if a.out else var / "variant_probe.json"

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Two panels, the same eight readouts on each: element activity, then the
+"""Legacy mixed-readout chart; use regulatory_benchmark.py for the primary analysis.
+
+Two panels, the same eight readouts on each: element activity, then the
 single-variant effect.
 
   Evo 2 zero-shot, NTv3 650M zero-shot, DNABERT-2 zero-shot,
@@ -8,8 +10,8 @@ single-variant effect.
 
 Each panel is fitted under one protocol, the one its existing scripts use:
 
-  element  element_spearman.py: grouped five-fold, folds unshuffled, RidgeCV in
-           each training fold (evo_probe.out_of_fold), n = 2,595
+  element  element_spearman.py: seeded grouped five-fold, grouped inner ridge
+           selection with fold-local scaling, n = 2,595
   variant  single_variant_spearman.py / variant_probe_fit.py: grouped five-fold
            shuffled with seed 0, ridge for multi-column features
            (evo_epistasis.out_of_fold_linear), n = 5,666
@@ -38,29 +40,35 @@ import re
 from pathlib import Path
 
 import matplotlib
+from artifact_io import aligned_tables, load_matrix, matched_embedding_metadata
+from validation import PROTOCOL
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from benchmark_stats import gc_fraction, group_boot
+from element_data import elements, validate_elements
+from evo_probe import kmers
 from scipy.stats import spearmanr
-
-from evo_epistasis import gc_fraction, group_boot, out_of_fold_linear
-from evo_probe import elements, kmers, out_of_fold
 from single_variant import single_variants
+from validation import out_of_fold, out_of_fold_linear
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#dcdcd8"
 COLOR = {"baseline": "#8a8a85", "likelihood": "#eb6834", "probe": "#2a78d6"}
-KIND_LABEL = {"likelihood": "model score, zero-shot (raw Spearman)",
-              "baseline": "sequence baseline (no model)",
-              "probe": "model embedding probe, supervised"}
+KIND_LABEL = {
+    "likelihood": "model score, zero-shot (raw Spearman)",
+    "baseline": "sequence baseline (no model)",
+    "probe": "model embedding probe, supervised",
+}
 
 EVO_PRED = "results/evo2_7b_base/predictions.csv"
 NTV3_PRED = "results/ntv3_650m_pre/predictions.csv"
-EVO_EMB = "results/evo_probe"                 # blocks.26.mlp.l3, mean pooled
-NTV3_DECONV = "results/ntv3_650m_deconv"      # deconv_7, one vector per base
-NTV3_BOTTLENECK = "results/ntv3_650m_final"   # transformer block 11
+EVO_EMB = "results/evo_probe"  # blocks.26.mlp.l3, mean pooled
+NTV3_DECONV = "results/ntv3_650m_deconv"  # deconv_7, one vector per base
+NTV3_BOTTLENECK = "results/ntv3_650m_final"  # transformer block 11
 NTV3_VARIANTS = "results/ntv3_650m_variants"  # block 11, alternate sequences
-DB2 = "results/vp_db2_L11"                    # DNABERT-2 block 11 of 12
+DB2 = "results/vp_db2_L11"  # DNABERT-2 block 11 of 12
 DB2_PRED = "results/dnabert2_117m/predictions.csv"  # dnabert2_score.py, then evaluate
 EVO_VARIANT_PROBE = "results/vp_evo2/probe.txt"
 
@@ -71,8 +79,7 @@ def sha(seq):
 
 def interval(prediction, y, groups, n_boot, seed):
     rho = float(spearmanr(prediction, y).statistic)
-    low, high = group_boot(groups, lambda i: spearmanr(prediction[i], y[i]).statistic,
-                           n_boot, seed)
+    low, high = group_boot(groups, lambda i: spearmanr(prediction[i], y[i]).statistic, n_boot, seed)
     return rho, [float(low), float(high)]
 
 
@@ -86,15 +93,19 @@ def row(label, kind, rho, ci, features, **extra):
 
 def gap(label, kind, why):
     print(f"  {label:44} not computed: {why}")
-    return {"label": label, "kind": kind, "spearman": None, "ci": None,
-            "not_computed": why}
+    return {
+        "label": label,
+        "kind": kind,
+        "spearman": None,
+        "ci": None,
+        "not_computed": why,
+    }
 
 
 def load_embedding(directory, ids):
     table = pd.read_csv(Path(directory) / "elements.csv")
-    matrix = np.load(Path(directory) / "X_mean.npy")
-    if len(table) != len(matrix):
-        raise SystemExit(f"{directory}: {len(table)} rows but {len(matrix)} vectors")
+    validate_elements(table, elements().set_index("sequence_id"))
+    matrix = load_matrix(Path(directory) / "X_mean.npy", table, ["sequence_id"])
     position = {s: i for i, s in enumerate(table.sequence_id)}
     missing = [s for s in ids if s not in position]
     if missing:
@@ -107,9 +118,7 @@ def db2_reference_embedding(ids):
     reference appears once per variant with an identical vector, so one copy
     per element is taken and checked."""
     seqs = pd.read_csv(Path(DB2) / "sequences.csv")
-    matrix = np.load(Path(DB2) / "X_wt_mean.npy")
-    if len(seqs) != len(matrix):
-        raise SystemExit(f"{DB2}: {len(seqs)} rows but {len(matrix)} vectors")
+    matrix = load_matrix(Path(DB2) / "X_wt_mean.npy", seqs, ["wt_id", "mut_id", "index"])
     first = {}
     for i, s in enumerate(seqs.wt_id):
         j = first.setdefault(s, i)
@@ -123,35 +132,54 @@ def db2_reference_embedding(ids):
 
 # ------------------------------------------------------------------ element
 
+
 def element_panel(folds, n_boot, seed):
     evo = elements(EVO_PRED)
     ntv3 = elements(NTV3_PRED)
-    if not evo.sequence_id.equals(ntv3.sequence_id):
-        raise SystemExit("the two element tables are not aligned")
+    aligned_tables(evo, ntv3, ["sequence_id", "activity", "group"], numeric_columns=("activity",))
     y, groups = evo.activity.to_numpy(), evo.group.to_numpy()
     seqs, ids = evo.seq.tolist(), evo.sequence_id.tolist()
     print(f"element activity, n = {len(y)}")
 
     def fit(features):
-        return out_of_fold(features, y, groups, folds)
+        return out_of_fold(features, y, groups, folds, seed)
 
     rows = []
-    for label, score in (("Evo 2 log-likelihood", evo.s_wt.to_numpy()),
-                         ("NTv3 650M pseudo-log-likelihood", ntv3.s_wt.to_numpy())):
+    for label, score in (
+        ("Evo 2 log-likelihood", evo.s_wt.to_numpy()),
+        ("NTv3 650M pseudo-log-likelihood", ntv3.s_wt.to_numpy()),
+    ):
         rho, ci = interval(score, y, groups, n_boot, seed)
         rows.append(row(label, "likelihood", rho, ci, 1, zero_shot=True))
     if Path(DB2_PRED).exists():
         db2 = elements(DB2_PRED)
-        if not db2.sequence_id.equals(evo.sequence_id):
-            raise SystemExit(f"{DB2_PRED}: element table is not aligned with Evo 2's")
+        aligned_tables(
+            evo, db2, ["sequence_id", "activity", "group"], numeric_columns=("activity",)
+        )
         rho, ci = interval(db2.s_wt.to_numpy(), y, groups, n_boot, seed)
-        rows.append(row("DNABERT-2 pseudo-log-likelihood", "likelihood", rho, ci, 1,
-                        zero_shot=True, source=DB2_PRED))
+        rows.append(
+            row(
+                "DNABERT-2 pseudo-log-likelihood",
+                "likelihood",
+                rho,
+                ci,
+                1,
+                zero_shot=True,
+                source=DB2_PRED,
+            )
+        )
     else:
-        rows.append(gap("DNABERT-2 pseudo-log-likelihood", "likelihood",
-                        "no DNABERT-2 scoring run exists (dnabert2_score.py)"))
-    for label, features in (("GC content", gc_fraction(seqs).reshape(-1, 1)),
-                            ("1/2/3-mer counts", kmers(seqs))):
+        rows.append(
+            gap(
+                "DNABERT-2 pseudo-log-likelihood",
+                "likelihood",
+                "no DNABERT-2 scoring run exists (dnabert2_score.py)",
+            )
+        )
+    for label, features in (
+        ("GC content", gc_fraction(seqs).reshape(-1, 1)),
+        ("1/2/3-mer counts", kmers(seqs)),
+    ):
         rho, ci = interval(fit(features), y, groups, n_boot, seed)
         rows.append(row(label, "baseline", rho, ci, int(features.shape[1])))
     probes = (
@@ -162,22 +190,25 @@ def element_panel(folds, n_boot, seed):
     for label, features, source in probes:
         rho, ci = interval(fit(features), y, groups, n_boot, seed)
         rows.append(row(label, "probe", rho, ci, int(features.shape[1]), source=source))
-    return {"n": int(len(y)), "target": "measured log2 activity of the reference 200-mer",
-            "protocol": "grouped five-fold, folds unshuffled, RidgeCV inside each "
-                        "training fold (element_spearman.py); zero-shot rows are the "
-                        "raw Spearman of the score; 95% interval resamples region groups",
-            "readouts": rows}
+    return {
+        "n": int(len(y)),
+        "target": "measured log2 activity of the reference 200-mer",
+        "protocol": PROTOCOL,
+        "readouts": rows,
+    }
 
 
 # ------------------------------------------------------------------ variant
 
+
 def variant_diff(directory, references, table):
     """h(alt) - h(ref) from an embed_variants.py set plus an element set, exactly
     as variant_probe_fit.py builds it."""
-    Xv = np.load(Path(directory) / "X_mean.npy")
+    matched_embedding_metadata(directory, references)
     sv = pd.read_csv(Path(directory) / "sequences.csv")
-    Xr = np.load(Path(references) / "X_mean.npy")
     sr = pd.read_csv(Path(references) / "elements.csv")
+    Xv = load_matrix(Path(directory) / "X_mean.npy", sv, ["sequence_id"])
+    Xr = load_matrix(Path(references) / "X_mean.npy", sr, ["sequence_id"])
     if len(sv) != len(Xv) or len(sr) != len(Xr) or Xv.shape[1] != Xr.shape[1]:
         raise SystemExit(f"{directory} / {references}: shapes do not agree")
     vi = {s: i for i, s in enumerate(sv.sequence_id)}
@@ -191,9 +222,7 @@ def variant_diff(directory, references, table):
 def db2_variant_diff(table):
     """DNABERT-2 stored the difference directly, one row per (reference, variant)."""
     obs = pd.read_csv(Path(DB2) / "observations.csv")
-    Xd = np.load(Path(DB2) / "X_d_mean.npy")
-    if len(obs) != len(Xd):
-        raise SystemExit(f"{DB2}: {len(obs)} rows but {len(Xd)} vectors")
+    Xd = load_matrix(Path(DB2) / "X_d_mean.npy", obs, ["wt_id", "mut_id"])
     where = {(w, m): i for i, (w, m) in enumerate(zip(obs.wt_id, obs.mut_id))}
     keys = list(zip(table.ref_id, table.sequence_id))
     missing = [k for k in keys if k not in where]
@@ -222,12 +251,15 @@ def variant_panel(folds, n_boot, seed):
     print(f"single-variant effect, n = {len(y)}")
 
     def fit(features):
-        return out_of_fold_linear(features, y, groups, folds,
-                                  ridge=features.shape[1] > 1, seed=seed)
+        return out_of_fold_linear(
+            features, y, groups, folds, ridge=features.shape[1] > 1, seed=seed
+        )
 
     rows = []
-    for label, score in (("Evo 2 delta log-likelihood", evo.delta_score.to_numpy()),
-                         ("NTv3 650M delta pseudo-log-likelihood", ntv3.delta_score.to_numpy())):
+    for label, score in (
+        ("Evo 2 delta log-likelihood", evo.delta_score.to_numpy()),
+        ("NTv3 650M delta pseudo-log-likelihood", ntv3.delta_score.to_numpy()),
+    ):
         rho, ci = interval(score, y, groups, n_boot, seed)
         rows.append(row(label, "likelihood", rho, ci, 1, zero_shot=True))
     if Path(DB2_PRED).exists():
@@ -235,39 +267,80 @@ def variant_panel(folds, n_boot, seed):
         if not db2.sequence_id.equals(evo.sequence_id):
             raise SystemExit(f"{DB2_PRED}: single-variant table is not aligned with Evo 2's")
         rho, ci = interval(db2.delta_score.to_numpy(), y, groups, n_boot, seed)
-        rows.append(row("DNABERT-2 delta pseudo-log-likelihood", "likelihood", rho, ci, 1,
-                        zero_shot=True, source=DB2_PRED))
+        rows.append(
+            row(
+                "DNABERT-2 delta pseudo-log-likelihood",
+                "likelihood",
+                rho,
+                ci,
+                1,
+                zero_shot=True,
+                source=DB2_PRED,
+            )
+        )
     else:
-        rows.append(gap("DNABERT-2 delta pseudo-log-likelihood", "likelihood",
-                        "no DNABERT-2 scoring run exists (dnabert2_score.py)"))
-    for label, features in (("GC content", gc_fraction(seqs).reshape(-1, 1)),
-                            ("1/2/3-mer delta", kmers(seqs) - kmers(refs))):
+        rows.append(
+            gap(
+                "DNABERT-2 delta pseudo-log-likelihood",
+                "likelihood",
+                "no DNABERT-2 scoring run exists (dnabert2_score.py)",
+            )
+        )
+    for label, features in (
+        ("GC content", gc_fraction(seqs).reshape(-1, 1)),
+        ("1/2/3-mer delta", kmers(seqs) - kmers(refs)),
+    ):
         rho, ci = interval(fit(features), y, groups, n_boot, seed)
         rows.append(row(label, "baseline", rho, ci, int(features.shape[1])))
 
     db2 = db2_variant_diff(table)
     rho, ci = interval(fit(db2), y, groups, n_boot, seed)
-    rows.append(row("DNABERT-2 probe (block 11 of 12)", "probe", rho, ci,
-                    int(db2.shape[1]), source=DB2))
+    rows.append(
+        row(
+            "DNABERT-2 probe (block 11 of 12)",
+            "probe",
+            rho,
+            ci,
+            int(db2.shape[1]),
+            source=DB2,
+        )
+    )
     bottleneck = variant_diff(NTV3_VARIANTS, NTV3_BOTTLENECK, table)
     rho, ci = interval(fit(bottleneck), y, groups, n_boot, seed)
-    rows.append(row("NTv3 650M probe (block 11, bottleneck)", "probe", rho, ci,
-                    int(bottleneck.shape[1]), source=NTV3_VARIANTS,
-                    substitute="deconv-layer variant embeddings do not exist; this is "
-                               "the transformer bottleneck, block 11"))
+    rows.append(
+        row(
+            "NTv3 650M probe (block 11, bottleneck)",
+            "probe",
+            rho,
+            ci,
+            int(bottleneck.shape[1]),
+            source=NTV3_VARIANTS,
+            substitute="deconv-layer variant embeddings do not exist; this is "
+            "the transformer bottleneck, block 11",
+        )
+    )
     carried = carried_evo_variant_probe()
     if carried is None:
-        rows.append(gap("Evo 2 probe (blocks.26.mlp.l3)", "probe",
-                        "no variant embeddings"))
+        rows.append(gap("Evo 2 probe (blocks.26.mlp.l3)", "probe", "no variant embeddings"))
     else:
-        rows.append(row("Evo 2 probe (blocks.26.mlp.l3)", "probe", carried[0], None, None,
-                        n=carried[1], other_protocol=True, source=EVO_VARIANT_PROBE))
-    return {"n": int(len(y)), "target": "measured log2 effect of one substitution",
-            "protocol": "grouped five-fold shuffled seed 0; ridge for multi-column "
-                        "features (single_variant_spearman.py); zero-shot rows are the "
-                        "raw Spearman of the delta score; 95% interval resamples region "
-                        "groups; probe feature is h(alt) - h(ref), mean pooled",
-            "readouts": rows}
+        rows.append(
+            row(
+                "Evo 2 probe (blocks.26.mlp.l3)",
+                "probe",
+                carried[0],
+                None,
+                None,
+                n=carried[1],
+                other_protocol=True,
+                source=EVO_VARIANT_PROBE,
+            )
+        )
+    return {
+        "n": int(len(y)),
+        "target": "measured log2 effect of one substitution",
+        "protocol": PROTOCOL,
+        "readouts": rows,
+    }
 
 
 # ------------------------------------------------------------------ drawing
@@ -297,12 +370,26 @@ def draw_panel(axis, data, title, ylabel):
     withci = [(i, r) for i, r in done if r.get("ci")]
     noci = [(i, r) for i, r in done if not r.get("ci")]
 
-    bars = axis.bar([i for i, _ in done], [r["spearman"] for _, r in done],
-                    color=[COLOR[r["kind"]] for _, r in done], width=0.62, zorder=3)
-    axis.errorbar([i for i, _ in withci], [r["spearman"] for _, r in withci],
-                  yerr=[[r["spearman"] - r["ci"][0] for _, r in withci],
-                        [r["ci"][1] - r["spearman"] for _, r in withci]],
-                  fmt="none", ecolor=INK, capsize=4, lw=1.1, zorder=4)
+    bars = axis.bar(
+        [i for i, _ in done],
+        [r["spearman"] for _, r in done],
+        color=[COLOR[r["kind"]] for _, r in done],
+        width=0.62,
+        zorder=3,
+    )
+    axis.errorbar(
+        [i for i, _ in withci],
+        [r["spearman"] for _, r in withci],
+        yerr=[
+            [r["spearman"] - r["ci"][0] for _, r in withci],
+            [r["ci"][1] - r["spearman"] for _, r in withci],
+        ],
+        fmt="none",
+        ecolor=INK,
+        capsize=4,
+        lw=1.1,
+        zorder=4,
+    )
     spans = [r["ci"][1] for _, r in withci] + [r["spearman"] for _, r in noci]
     lows = [r["ci"][0] for _, r in withci] + [r["spearman"] for _, r in noci]
     top = max(spans) + 0.09 * (max(spans) - min(0, min(lows)))
@@ -312,25 +399,62 @@ def draw_panel(axis, data, title, ylabel):
         # Above the upper cap for a positive bar, below the lower cap for a
         # negative one, so the number never sits inside the bar.
         if r["spearman"] >= 0:
-            axis.text(i, r["ci"][1] + pad, f"{r['spearman']:+.3f}",
-                      ha="center", va="bottom", fontsize=9.5, color=INK)
+            axis.text(
+                i,
+                r["ci"][1] + pad,
+                f"{r['spearman']:+.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=9.5,
+                color=INK,
+            )
         else:
-            axis.text(i, r["ci"][0] - pad, f"{r['spearman']:+.3f}",
-                      ha="center", va="top", fontsize=9.5, color=INK)
+            axis.text(
+                i,
+                r["ci"][0] - pad,
+                f"{r['spearman']:+.3f}",
+                ha="center",
+                va="top",
+                fontsize=9.5,
+                color=INK,
+            )
     for i, r in noci:
         bar = bars[[j for j, _ in done].index(i)]
         bar.set_hatch("///")
         bar.set_edgecolor("white")
-        axis.text(i, r["spearman"] + pad, f"{r['spearman']:+.3f}*",
-                  ha="center", fontsize=9.5, color=INK)
+        axis.text(
+            i,
+            r["spearman"] + pad,
+            f"{r['spearman']:+.3f}*",
+            ha="center",
+            fontsize=9.5,
+            color=INK,
+        )
     for i, r in gaps:
-        axis.add_patch(plt.Rectangle((i - 0.31, 0), 0.62, top * 0.42, facecolor="none",
-                                     edgecolor=GRID, lw=1, ls=(0, (3, 3)), zorder=3))
-        axis.text(i, top * 0.21, "no scoring\nrun", ha="center", va="center",
-                  fontsize=8.5, color=MUTED, style="italic")
+        axis.add_patch(
+            plt.Rectangle(
+                (i - 0.31, 0),
+                0.62,
+                top * 0.42,
+                facecolor="none",
+                edgecolor=GRID,
+                lw=1,
+                ls=(0, (3, 3)),
+                zorder=3,
+            )
+        )
+        axis.text(
+            i,
+            top * 0.21,
+            "no scoring\nrun",
+            ha="center",
+            va="center",
+            fontsize=8.5,
+            color=MUTED,
+            style="italic",
+        )
     axis.axhline(0, color=MUTED, lw=1, zorder=2)
-    axis.set_xticks(x, [TICK.get(r["label"], r["label"]) for r in rows],
-                    fontsize=8.8, color=INK)
+    axis.set_xticks(x, [TICK.get(r["label"], r["label"]) for r in rows], fontsize=8.8, color=INK)
     for tick, r in zip(axis.get_xticklabels(), rows):
         tick.set_color(MUTED if r["spearman"] is None else INK)
     axis.set_ylabel(ylabel, fontsize=10, color=INK)
@@ -346,23 +470,48 @@ def draw_panel(axis, data, title, ylabel):
 def draw(element, variant, path):
     figure, (top, bottom) = plt.subplots(2, 1, figsize=(11.5, 11.8))
     figure.patch.set_facecolor("white")
-    draw_panel(top, element,
-               f"A   Predicting element activity from the 200-mer  "
-               f"(n = {element['n']:,} elements)\n"
-               "      out of fold, grouped five-fold unshuffled, 95% interval over region groups",
-               "Spearman with measured element activity")
-    draw_panel(bottom, variant,
-               f"B   Predicting the effect of a single substitution  "
-               f"(n = {variant['n']:,} variants)\n"
-               "      out of fold, grouped five-fold shuffled seed 0, 95% interval over "
-               "region groups; probe feature is h(alt) − h(ref)",
-               "Spearman with the measured single-variant effect")
-    handles = [plt.Line2D([], [], marker="s", ls="", ms=9, color=COLOR[k], label=v)
-               for k, v in KIND_LABEL.items()]
-    handles.append(plt.Line2D([], [], marker="s", ls="", ms=9, color="white",
-                              mec=GRID, label="not computed"))
-    figure.legend(handles=handles, loc="lower center", ncol=4, frameon=False,
-                  fontsize=9, labelcolor=INK, bbox_to_anchor=(0.5, 0.004))
+    draw_panel(
+        top,
+        element,
+        f"A   Predicting element activity from the 200-mer  "
+        f"(n = {element['n']:,} elements)\n"
+        "      out of fold, seeded nested grouped five-fold, 95% interval over region groups",
+        "Spearman with measured element activity",
+    )
+    draw_panel(
+        bottom,
+        variant,
+        f"B   Predicting the effect of a single substitution  "
+        f"(n = {variant['n']:,} variants)\n"
+        "      out of fold, grouped five-fold shuffled seed 0, 95% interval over "
+        "region groups; probe feature is h(alt) − h(ref)",
+        "Spearman with the measured single-variant effect",
+    )
+    handles = [
+        plt.Line2D([], [], marker="s", ls="", ms=9, color=COLOR[k], label=v)
+        for k, v in KIND_LABEL.items()
+    ]
+    handles.append(
+        plt.Line2D(
+            [],
+            [],
+            marker="s",
+            ls="",
+            ms=9,
+            color="white",
+            mec=GRID,
+            label="not computed",
+        )
+    )
+    figure.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=4,
+        frameon=False,
+        fontsize=9,
+        labelcolor=INK,
+        bbox_to_anchor=(0.5, 0.004),
+    )
     notes = [
         "Zero-shot bars are the raw Spearman of the model's own score. Baselines and "
         "probes are fitted out of fold; probes are mean-pooled embeddings at the layer named.",
@@ -373,8 +522,16 @@ def draw(element, variant, path):
         "committed: n = 5,428, its own folds, no interval. Read it beside the others, not "
         "against them.",
     ]
-    figure.text(0.012, 0.048, "\n".join(notes), fontsize=8.2, color=MUTED,
-                ha="left", va="bottom", linespacing=1.5)
+    figure.text(
+        0.012,
+        0.048,
+        "\n".join(notes),
+        fontsize=8.2,
+        color=MUTED,
+        ha="left",
+        va="bottom",
+        linespacing=1.5,
+    )
     figure.tight_layout(rect=(0, 0.12, 1, 1), h_pad=3.5)
     figure.savefig(path, dpi=200, facecolor="white")
     plt.close(figure)
@@ -382,21 +539,27 @@ def draw(element, variant, path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--out", default="results/figures/eight_readouts.png", type=Path)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--redraw", action="store_true",
-                        help="draw from the json beside --out instead of refitting")
+    parser.add_argument(
+        "--redraw",
+        action="store_true",
+        help="draw from the json beside --out instead of refitting",
+    )
     args = parser.parse_args()
     store = args.out.with_suffix(".json")
     if args.redraw:
         data = json.loads(store.read_text())
     else:
-        data = {"element": element_panel(args.folds, args.bootstrap, args.seed),
-                "variant": variant_panel(args.folds, args.bootstrap, args.seed)}
+        data = {
+            "element": element_panel(args.folds, args.bootstrap, args.seed),
+            "variant": variant_panel(args.folds, args.bootstrap, args.seed),
+        }
         args.out.parent.mkdir(parents=True, exist_ok=True)
         store.write_text(json.dumps(data, indent=2) + "\n")
     draw(data["element"], data["variant"], args.out)

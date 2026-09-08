@@ -1,5 +1,12 @@
 # Which layer every readout uses
 
+For the primary analysis, the authoritative registry is `scripts/benchmark_models.py`:
+Evo 2 `blocks.26.mlp.l3`, NTv3 100M and 650M `hidden_states[-1]` after the last
+deconvolution stage, and DNABERT-2's last encoder layer. Use `embed_elements.py`
+and `regulatory_benchmark.py probes`; all primary probes are whole-element ridge
+regressions against the same GC and k-mer controls. The tables below are historical
+and exploratory, not substitute primary configurations.
+
 One place to check before quoting any probe number. Every fact here is read from
 the `meta.json` beside the matrices, or from the matrices themselves.
 
@@ -74,3 +81,10 @@ missing layers; nothing above the bottleneck has been measured for 100M at all.
 The two `hidden_states[-4]` directories that used to sit beside these
 (`results/ntv3_probe`, `results/ntv3_650m_probe`) were `deconv_4` reads, 32 positions
 at 8x downsampling. Nothing quoted them and they have been removed.
+# Current code versus historical sweeps
+
+The tables below describe historical artifacts. Current `ntv3_sweep.py` uses
+explicit transformer final-layer-normalization hooks; its `L0` is not the old
+U-Net `conv_1`. Read each run's `meta.json`. `ntv3_unet.py list` maps U-Net stages,
+and its `embed --representation` selects them explicitly. Pooling and CV changed
+in this cleanup; see [PROTOCOL.md](PROTOCOL.md) before interpreting old scores.

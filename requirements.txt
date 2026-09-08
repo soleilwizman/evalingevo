@@ -1,8 +1,8 @@
 # CPU analysis: scripts/evo_epistasis.py evaluate, scripts/*_probe.py probe, scripts/layer_curve.py
 numpy
-pandas
+pandas>=2.2
 scipy
-scikit-learn
+scikit-learn>=1.6
 matplotlib
 # GPU scoring and embedding, not needed for the analysis above.
 # torch and transformers for NTv3; the evo2 package from
