@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from evo_probe import elements, kmers, out_of_fold, paired_interval, PRED, AUDIT
+from evo_probe import elements, kmers, out_of_fold, report_margin, PRED, AUDIT
 from scipy.stats import spearmanr
 
 MULTIPLE = 128
@@ -138,14 +138,12 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5, n_permuta
     print(f"\nnoise floor from {n_permutations} label permutations: "
           f"{np.mean(shuffled):+.4f} +/- {np.std(shuffled):.4f}")
 
-    low, high = paired_interval(preds["NTv3 hidden layer (probe)"],
-                                preds["DNA word counts (84 features)"], y, g)
     margin = (spearmanr(preds["NTv3 hidden layer (probe)"], y).statistic
               - spearmanr(preds["DNA word counts (84 features)"], y).statistic)
-    print(f"probe minus word counts: {margin:+.4f}  95% interval [{low:+.4f}, {high:+.4f}]")
-    print("The information is in there, and it beats word counts."
-          if low > 0 else
-          "Not distinguishable from word counts on this evidence.")
+    report_margin(preds["NTv3 hidden layer (probe)"],
+                  preds["DNA word counts (84 features)"], y, g, margin,
+                  "The information is in there, and it beats word counts.",
+                  "Not distinguishable from word counts on this evidence.")
 
 
 def main():

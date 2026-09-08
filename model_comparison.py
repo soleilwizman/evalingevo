@@ -12,9 +12,9 @@ Run:  python3 model_comparison.py --out results/model_comparison.png
 
 import argparse
 import json
-import re
 from pathlib import Path
 
+import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -26,20 +26,60 @@ SURFACE, INK, INK_SOFT = "#fcfcfb", "#0b0b0b", "#52514e"
 
 SCORE_RUNS = (("Evo 2 7B base", "results/evo2_7b_base/metrics.json"),
               ("NTv3 100M pre", "results/ntv3_100m_pre/metrics.json"))
-PROBE_RUNS = (("Evo 2 7B base", "results/evo_probe/probe.txt", "blocks.26.mlp.l3"),
-              ("NTv3 100M pre", "results/ntv3_100m_final/probe.txt", "block 5"),
-              ("NTv3 650M pre", "results/ntv3_650m_final/probe.txt", "block 11"))
+# Computed from the matrices, not parsed out of probe.txt, because the layer that matters
+# for NTv3 turned out to be in the conv tower and only the sweep holds it. Cached to
+# PROBE_CACHE so the figure redraws without refitting.
+PROBE_CACHE = Path("results/probe_margins.json")
+PROBE_RUNS = (
+    ("Evo 2 7B base", "results/evo_probe", "X_mean.npy", "blocks.26.mlp.l3"),
+    ("NTv3 650M pre", "results/ntv3_650m_sweep", "X_mean_L1.npy", "conv_2, 128 pos"),
+    ("NTv3 650M pre", "results/ntv3_650m_deconv", "X_mean.npy", "deconv_7, per-base"),
+    ("NTv3 650M pre", "results/ntv3_650m_final", "X_mean.npy", "transformer_11, 2 pos"),
+    ("NTv3 100M pre", "results/ntv3_100m_final", "X_mean.npy", "transformer_5, 2 pos"),
+)
 
 
-def read_probe(path):
-    """Pull the probe's own Spearman and its paired margin over word counts."""
-    text = Path(path).read_text()
-    level = re.search(r"^\S.*hidden layer \(probe\)\s+([+-][\d.]+)", text, re.M)
-    margin = re.search(r"probe minus word counts:\s*([+-][\d.]+)\s*"
-                       r"95% interval \[([+-][\d.]+),\s*([+-][\d.]+)\]", text)
-    if not level or not margin:
-        raise SystemExit(f"{path} has no probe row or paired interval; re-run the probe")
-    return float(level.group(1)), tuple(float(margin.group(i)) for i in (1, 2, 3))
+def probe_margins(refresh=False):
+    """Margin over 1/2/3-mer counts for every representation, with the seed check.
+
+    Each directory brings its own elements.csv, so ordering differences between runs
+    cannot silently misalign the activities.
+    """
+    if PROBE_CACHE.exists() and not refresh:
+        return json.loads(PROBE_CACHE.read_text())
+
+    import numpy as np
+    from scipy.stats import spearmanr
+    from evo_probe import elements, kmers, out_of_fold, paired_interval
+    from evo_probe import VERDICT_MARGIN, VERDICT_SEEDS
+
+    table = elements().set_index("sequence_id")
+    rows = []
+    for label, directory, matrix, layer in PROBE_RUNS:
+        directory = Path(directory)
+        element_rows = pd.read_csv(directory / "elements.csv")
+        y = element_rows.activity.values
+        groups = element_rows.group.values
+        sequences = table.seq.loc[element_rows.sequence_id].values
+        words = out_of_fold(kmers(sequences), y, groups, 5)
+        probe = out_of_fold(np.load(directory / matrix), y, groups, 5)
+        margin = float(spearmanr(probe, y).statistic - spearmanr(words, y).statistic)
+        low, high = paired_interval(probe, words, y, groups, 1000, 0)
+        cleared = None
+        if abs(low) < VERDICT_MARGIN:
+            lows = [low] + [paired_interval(probe, words, y, groups, 1000, seed)[0]
+                            for seed in range(1, VERDICT_SEEDS)]
+            cleared = sum(1 for value in lows if value > 0)
+        rows.append({"label": label, "layer": layer, "n": int(len(y)),
+                     "rho": float(spearmanr(probe, y).statistic),
+                     "words": float(spearmanr(words, y).statistic),
+                     "margin": margin, "low": float(low), "high": float(high),
+                     "seeds_clearing": cleared, "seeds": VERDICT_SEEDS})
+        print(f"  {label} {layer}: {margin:+.4f} [{low:+.4f}, {high:+.4f}]"
+              + (f"  {cleared}/{VERDICT_SEEDS} seeds" if cleared is not None else ""), flush=True)
+    PROBE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    PROBE_CACHE.write_text(json.dumps(rows, indent=2) + "\n")
+    return rows
 
 
 def collect():
@@ -70,11 +110,15 @@ def collect():
                    "xlabel": "Spearman (cluster-bootstrap 95% CI)"})
 
     rows = []
-    for name, path, layer in PROBE_RUNS:
-        level, (margin, low, high) = read_probe(path)
-        rows.append((f"{name}\n{layer}, ρ = {level:+.3f}", COLOR[name], margin, [low, high]))
+    for entry in probe_margins():
+        note = "" if entry["seeds_clearing"] in (None, entry["seeds"], 0) \
+            else f", {entry['seeds_clearing']}/{entry['seeds']} seeds"
+        rows.append((f"{entry['label']}\n{entry['layer']}, ρ = {entry['rho']:+.3f}{note}",
+                     COLOR[entry["label"]], entry["margin"], [entry["low"], entry["high"]]))
+    words = probe_margins()[0]["words"]
     panels.append({"title": "Element activity, learned probe on embeddings", "rows": rows,
-                   "note": "advantage over 1/2/3-mer counts (ρ = +0.456), n = 2,595 elements",
+                   "note": f"advantage over 1/2/3-mer counts (ρ = {words:+.3f}); a row "
+                           "annotated with seeds sits on the boundary, n = 2,595 elements",
                    "xlabel": "Spearman margin over word counts (paired 95% CI)"})
     return panels
 
@@ -108,8 +152,13 @@ def draw_panel(axis, panel):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="results/model_comparison.png")
+    parser.add_argument("--refresh-probes", action="store_true", dest="refresh",
+                        help="refit the probe panel instead of reading its cache")
     args = parser.parse_args()
 
+    if args.refresh:
+        print("refitting the probe panel:")
+        probe_margins(refresh=True)
     panels = collect()
     # row heights track row counts so a two-row panel is not stretched to fill a three-row box
     heights = [max(len(p["rows"]) for p in panels[:2]), max(len(p["rows"]) for p in panels[2:])]
