@@ -1,0 +1,168 @@
+{
+  "label": "Evo 2 7B base",
+  "target": "measured log2 activity change of one substitution, ref/alt coding",
+  "note": "the allele recoding used for the interaction contrast does not apply here",
+  "predictions": "results/evo2_7b_base/predictions.csv",
+  "zero_shot": {
+    "n": 5666,
+    "reliability": 0.7314214225938893,
+    "ceiling": 0.8552317946579683,
+    "signed_spearman": -0.018149315238794615,
+    "signed_spearman_95ci": [
+      -0.04795896775510765,
+      0.009579221314779984
+    ],
+    "signed_pearson": -0.01485664153204791,
+    "magnitude_spearman": -0.005877267859140895,
+    "magnitude_spearman_95ci": [
+      -0.03357561922800643,
+      0.02156917881670671
+    ],
+    "disattenuated_signed": -0.021221516028941657
+  },
+  "supervised_out_of_fold": {
+    "model_delta_score": {
+      "spearman": -0.013901254252054263,
+      "rmse": 0.40746658349164244
+    },
+    "gc_content": {
+      "spearman": -0.023993549217283455,
+      "rmse": 0.4075051994404798
+    },
+    "position": {
+      "spearman": -0.03668969440259468,
+      "rmse": 0.40756487020696647
+    },
+    "allele_identity": {
+      "spearman": 0.08173115286693548,
+      "rmse": 0.40569853406510825
+    },
+    "kmer_counts": {
+      "spearman": -0.03547342820502203,
+      "rmse": 0.408030701534935
+    },
+    "kmer_delta": {
+      "spearman": 0.17685510370295074,
+      "rmse": 0.40141496452423064
+    },
+    "kmer_delta_plus_alleles": {
+      "spearman": 0.17508372261961674,
+      "rmse": 0.4017051085043632
+    },
+    "kmer_delta_plus_model": {
+      "spearman": 0.1762080679106946,
+      "rmse": 0.4014670653028644
+    },
+    "training_mean": {
+      "spearman": -0.03438549896287646,
+      "rmse": 0.4074585608694428
+    },
+    "perfect_predictor_rmse_floor": 0.21107006579041704,
+    "margin_over_kmer_delta": {
+      "model_delta_score": {
+        "margin": -0.190756357955005,
+        "interval": [
+          -0.2316986336074172,
+          -0.15268484138676244
+        ]
+      },
+      "gc_content": {
+        "margin": -0.20084865292023418,
+        "interval": [
+          -0.24364878981808819,
+          -0.15636595426039196
+        ]
+      },
+      "position": {
+        "margin": -0.2135447981055454,
+        "interval": [
+          -0.2524053336275086,
+          -0.17546876543484372
+        ]
+      },
+      "allele_identity": {
+        "margin": -0.09512395083601526,
+        "interval": [
+          -0.12291135908539874,
+          -0.06568292838501334
+        ]
+      },
+      "kmer_counts": {
+        "margin": -0.21232853190797277,
+        "interval": [
+          -0.255245269468219,
+          -0.167266347049408
+        ]
+      },
+      "kmer_delta_plus_alleles": {
+        "margin": -0.001771381083333995,
+        "interval": [
+          -0.003861549380942057,
+          0.0003271599942877637
+        ]
+      },
+      "kmer_delta_plus_model": {
+        "margin": -0.0006470357922561398,
+        "interval": [
+          -0.0015929364010543248,
+          0.0002611631812783627
+        ]
+      }
+    }
+  },
+  "detection": {
+    "n_positives": 522,
+    "positive_rate": 0.0921284857042005,
+    "single_feature_auroc": {
+      "model_delta_score_abs": 0.5044753251938053,
+      "gc_content": 0.5841105658938286,
+      "position": 0.5256514676176686
+    },
+    "covariates_only": 0.5757861333071153,
+    "covariates_plus_model": 0.573959245752966,
+    "gain": -0.0018268875541492813,
+    "gain_95ci": [
+      -0.005025991244583259,
+      0.001394884220276317
+    ]
+  },
+  "precision_strata": [
+    {
+      "keep": 1.0,
+      "n": 5666,
+      "reliability": 0.7314214225938893,
+      "ceiling": 0.8552317946579683,
+      "signed_spearman": -0.018149315238794615,
+      "disattenuated": -0.021221516028941657
+    },
+    {
+      "keep": 0.75,
+      "n": 4249,
+      "reliability": 0.8396330249475958,
+      "ceiling": 0.9163149158163889,
+      "signed_spearman": -0.006556866441723196,
+      "disattenuated": -0.007155691049600965
+    },
+    {
+      "keep": 0.5,
+      "n": 2833,
+      "reliability": 0.8956886525044668,
+      "ceiling": 0.9464082905936881,
+      "signed_spearman": 0.01531682079792221,
+      "disattenuated": 0.01618415746158972
+    },
+    {
+      "keep": 0.25,
+      "n": 1417,
+      "reliability": 0.9371723097459039,
+      "ceiling": 0.9680766032426896,
+      "signed_spearman": 0.019086510004373315,
+      "disattenuated": 0.019715908782880136
+    }
+  ],
+  "settings": {
+    "folds": 5,
+    "seed": 0,
+    "bootstrap": 1000
+  }
+}
