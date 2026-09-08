@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A benchmark of frozen genomic language models (Evo 2 7B, Nucleotide Transformer v3) against
-measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Seven flat Python
+measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-one flat Python
 scripts, no package, no test suite, no linter config. The README is the paper draft and its
 numbers must be kept in sync with `results/*/metrics.json`.
+`docs/proposal/` holds the proposal PDF, its `.docx`, and the python-docx script that builds it;
+nothing in the pipeline reads it.
 
 ## Commands
 
