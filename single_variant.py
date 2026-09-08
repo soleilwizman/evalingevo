@@ -242,10 +242,9 @@ def evaluate(predictions_path, out_path, label, audit=AUDIT, folds=5, seed=0, n_
           f"95% CI [{z['magnitude_spearman_95ci'][0]:+.4f}, {z['magnitude_spearman_95ci'][1]:+.4f}]")
     print("\n  grouped five-fold out-of-fold, predicting the measured effect")
     width = max(len(k) for k in s if k != "perfect_predictor_rmse_floor")
-    for name, value in sorted(s.items(), key=lambda kv: -kv[1]["spearman"]
-                              if isinstance(kv[1], dict) else 1):
-        if isinstance(value, dict):
-            print(f"    {name:{width}}  rho {value['spearman']:+.4f}   RMSE {value['rmse']:.4f}")
+    readouts = {k: v for k, v in s.items() if isinstance(v, dict) and "spearman" in v}
+    for name, value in sorted(readouts.items(), key=lambda kv: -kv[1]["spearman"]):
+        print(f"    {name:{width}}  rho {value['spearman']:+.4f}   RMSE {value['rmse']:.4f}")
     print(f"    {'RMSE floor for a perfect predictor':{width}}       "
           f"       {s['perfect_predictor_rmse_floor']:.4f}")
     if d.get("n_positives"):
