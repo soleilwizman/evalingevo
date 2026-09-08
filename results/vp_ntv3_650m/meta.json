@@ -1,0 +1,11 @@
+{
+  "model": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_650M_pre",
+  "layer": "-4",
+  "label": "NTv3 NTv3_650M_pre hidden_states[-4]",
+  "units": "downsampled-8x",
+  "units_per_sequence": 26.0,
+  "n_observations": 5428,
+  "n_sequences": 8023,
+  "width": 1536
+}

@@ -1,0 +1,13 @@
+n=5428  NTv3 NTv3_650M_pre hidden_states[0]  width 1536  target signed
+pooled over bases, 200.0 per sequence, grouped 5-fold seed 0
+measurement reliability 0.7346, so no predictor of the signed effect can exceed 0.8571
+
+                                     Spearman     RMSE   within-element
+variant position + side (2)          -0.0368   0.4095   0.491
+k-mer difference (84)                +0.1735   0.4035   0.556
+reference embedding only (control)   -0.0186   0.4131   0.505
+difference, mean pooled              +0.2109   0.3963   0.570
+difference, at the variant unit      +0.1575   0.4024   0.563
+predict the mean                     +0.0000   0.4094   0.500
+
+within-element column: 5585 pairs sharing an element, ranked on which variant matters more. Chance is 0.500 and knowing the element cannot help, so this is the variant question on its own.

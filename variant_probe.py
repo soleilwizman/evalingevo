@@ -242,9 +242,14 @@ class DNABERT2Adapter:
         except Exception as first:
             from transformers.models.bert.configuration_bert import BertConfig
             try:
-                self.model = AutoModel.from_pretrained(
-                    checkpoint, trust_remote_code=True,
-                    config=BertConfig.from_pretrained(checkpoint))
+                cfg = BertConfig.from_pretrained(checkpoint)
+                try:
+                    self.model = AutoModel.from_pretrained(
+                        checkpoint, trust_remote_code=True, config=cfg)
+                except Exception:
+                    self.model = AutoModel.from_pretrained(
+                        checkpoint, trust_remote_code=True, config=cfg,
+                        low_cpu_mem_usage=False, device_map=None)
             except Exception as second:
                 raise SystemExit(f"could not load {checkpoint}\n  direct: {first}\n"
                                  f"  with BertConfig: {second}\n"
