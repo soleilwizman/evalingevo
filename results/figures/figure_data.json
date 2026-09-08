@@ -1,0 +1,208 @@
+{
+  "element": {
+    "rows": [
+      [
+        "Evo 2 log-likelihood",
+        0.0059,
+        "likelihood"
+      ],
+      [
+        "GC content",
+        0.3248,
+        "baseline"
+      ],
+      [
+        "Evo 2 probe, last token",
+        0.3899,
+        "probe"
+      ],
+      [
+        "NTv3 650M probe",
+        0.4403,
+        "probe"
+      ],
+      [
+        "NTv3 100M probe",
+        0.443,
+        "probe"
+      ],
+      [
+        "1/2/3-mer counts",
+        0.456,
+        "baseline"
+      ],
+      [
+        "NTv3 650M probe + k-mers",
+        0.4653,
+        "combined"
+      ],
+      [
+        "NTv3 100M probe + k-mers",
+        0.4719,
+        "combined"
+      ],
+      [
+        "Evo 2 probe, mean pooled",
+        0.5051,
+        "probe"
+      ],
+      [
+        "Evo 2 probe + k-mers",
+        0.5144,
+        "combined"
+      ]
+    ],
+    "margins": [
+      [
+        "Evo 2 probe, mean pooled",
+        0.049,
+        0.015,
+        0.0809,
+        "probe"
+      ],
+      [
+        "Evo 2 probe, last token",
+        -0.0662,
+        -0.1022,
+        -0.0339,
+        "probe"
+      ],
+      [
+        "NTv3 100M probe",
+        -0.0131,
+        -0.0404,
+        0.0133,
+        "probe"
+      ],
+      [
+        "NTv3 650M probe",
+        -0.0157,
+        -0.0477,
+        0.0153,
+        "probe"
+      ]
+    ],
+    "baseline": 0.456,
+    "baseline_name": "1/2/3-mer counts",
+    "ceiling": 0.9956190262495186,
+    "n": 2595,
+    "title": "Predicting element activity",
+    "subtitle": "one value per distinct reference 200-mer",
+    "not_separable": {
+      "n": 2595,
+      "pooling": "mean",
+      "folds": 5,
+      "a": {
+        "label": "NTv3 100M probe",
+        "dir": "results/ntv3_100m_final",
+        "width": 768,
+        "spearman": 0.442970944430591
+      },
+      "b": {
+        "label": "NTv3 650M probe",
+        "dir": "results/ntv3_650m_final",
+        "width": 1536,
+        "spearman": 0.4403020824920501
+      },
+      "difference": 0.0026688619385408785,
+      "difference_95ci": [
+        -0.026205707204194833,
+        0.03056623983279185
+      ],
+      "verdict": "not distinguishable: the interval contains zero",
+      "fold_draw_sensitivity": {
+        "probe": "NTv3 100M probe",
+        "n_draws": 6,
+        "min": 0.45177926242882577,
+        "max": 0.46069381810128157,
+        "range": 0.008914555672455804,
+        "note": "the same probe refit under different fold shuffles; a gap smaller than this range is not a result"
+      }
+    }
+  },
+  "single": {
+    "rows": [
+      [
+        "variant position",
+        -0.03668969440259468,
+        "baseline"
+      ],
+      [
+        "1/2/3-mer counts, absolute",
+        -0.03547342820502203,
+        "baseline"
+      ],
+      [
+        "GC content",
+        -0.023993549217283455,
+        "baseline"
+      ],
+      [
+        "Evo 2 delta log-likelihood",
+        -0.013901254252054263,
+        "likelihood"
+      ],
+      [
+        "NTv3 delta pseudo-log-likelihood",
+        0.03183449912312418,
+        "likelihood"
+      ],
+      [
+        "ref/alt allele identity",
+        0.08173115286693548,
+        "baseline"
+      ],
+      [
+        "delta k-mers + Evo 2",
+        0.1762080679106946,
+        "combined"
+      ],
+      [
+        "delta k-mers + NTv3",
+        0.17656060567656023,
+        "combined"
+      ],
+      [
+        "delta k-mers, words made and broken",
+        0.17685510370295074,
+        "baseline"
+      ]
+    ],
+    "margins": [
+      [
+        "Evo 2 delta log-likelihood",
+        -0.190756357955005,
+        -0.2316986336074172,
+        -0.15268484138676244,
+        "likelihood"
+      ],
+      [
+        "NTv3 delta pseudo-log-likelihood",
+        -0.14502060457982657,
+        -0.18241889531247782,
+        -0.1118988939423103,
+        "likelihood"
+      ],
+      [
+        "delta k-mers + Evo 2",
+        -0.0006470357922561398,
+        -0.0015929364010543248,
+        0.0002611631812783627,
+        "combined"
+      ],
+      [
+        "delta k-mers + NTv3",
+        -0.00029449802639050504,
+        -0.0007760837840459014,
+        0.0002307316506907401,
+        "combined"
+      ]
+    ],
+    "baseline": 0.17685510370295074,
+    "baseline_name": "delta k-mers",
+    "ceiling": 0.8552317946579683,
+    "n": 5666,
+    "title": "Predicting single-variant effect",
+    "subtitle": "one value per substitution, ref/alt coding"
+  }
+}

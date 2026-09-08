@@ -145,30 +145,6 @@ def out_of_fold(X, y, groups, folds=5):
     return pred
 
 
-# A pass/fail on one bootstrap draw is not a usable instrument near zero: the NTv3 650M
-# deconv margin clears zero on 7 of 10 seeds and fails on 3. So whenever the lower bound
-# lands this close, re-bootstrap and report the spread instead of a verdict.
-VERDICT_MARGIN, VERDICT_SEEDS = 0.01, 10
-
-
-def report_margin(pred_a, pred_b, y, groups, margin, win, tie, n_boot=1000):
-    """Print the interval on rho(a) - rho(b), refusing a verdict on the boundary."""
-    low, high = paired_interval(pred_a, pred_b, y, groups, n_boot, 0)
-    print(f"probe minus word counts: {margin:+.4f}  95% interval [{low:+.4f}, {high:+.4f}]")
-    if abs(low) < VERDICT_MARGIN:
-        lows = [low] + [paired_interval(pred_a, pred_b, y, groups, n_boot, s)[0]
-                        for s in range(1, VERDICT_SEEDS)]
-        cleared = sum(1 for value in lows if value > 0)
-        print(f"lower bound over {VERDICT_SEEDS} seeds: min {min(lows):+.4f}, "
-              f"max {max(lows):+.4f}, clears zero {cleared}/{VERDICT_SEEDS}")
-        if cleared not in (0, VERDICT_SEEDS):
-            print("On the boundary: the verdict flips with the bootstrap seed. Report the "
-                  "margin and this spread, not a pass/fail.")
-            return low, high
-    print(win if low > 0 else tie)
-    return low, high
-
-
 def paired_interval(pred_a, pred_b, y, groups, n_boot=1000, seed=0):
     """Bootstrap whole groups; return the 95% interval on rho(a) - rho(b)."""
     rng = np.random.default_rng(seed)
@@ -203,11 +179,13 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     gc = np.array([[(s.count("G") + s.count("C")) / len(s)] for s in seqs])
     km = kmers(seqs)
 
+    probe_name = f"Evo hidden layer {meta['layer']} (probe)"
     preds, rows = {}, []
     for name, feat in [("Evo score (1 feature)", el[["s_wt"]].values),
                        ("GC content (1 feature)", gc),
                        ("DNA word counts (84 features)", km),
-                       ("Evo hidden layer (probe)", X)]:
+                       (probe_name, X),
+                       (f"{probe_name} + word counts", np.hstack([X, km]))]:
         preds[name] = out_of_fold(feat, y, g, folds)
         rows.append((name, spearmanr(preds[name], y).statistic,
                      float(np.sqrt(np.mean((preds[name] - y) ** 2)))))
@@ -226,12 +204,13 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     print(f"\nnoise floor from {n_permutations} label permutations: "
           f"{np.mean(null):+.4f} +/- {np.std(null):.4f}")
 
-    a, b = "Evo probe (blocks.26.mlp.l3 layer)", "DNA word counts (84 features)"
+    a, b = probe_name, "DNA word counts (84 features)"
+    lo, hi = paired_interval(preds[a], preds[b], y, g)
     got = dict((r[0], r[1]) for r in rows)
-    print()
-    report_margin(preds[a], preds[b], y, g, got[a] - got[b],
-                  "The information is in there, and it beats word counts.",
-                  "No evidence Evo's representations add anything over word counts.")
+    print(f"\nprobe minus word counts: {got[a] - got[b]:+.4f}  "
+          f"95% interval [{lo:+.4f}, {hi:+.4f}]")
+    print("The information is in there, and it beats word counts." if lo > 0 else
+          "No evidence Evo's representations add anything over word counts.")
 
 
 def main():

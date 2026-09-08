@@ -1,0 +1,56 @@
+{
+  "label": "NTv3 100M probe",
+  "n": 5666,
+  "n_total": 5666,
+  "pooling": "mean",
+  "folds": 5,
+  "seed": 0,
+  "variants": "results/ntv3_100m_variants",
+  "references": "results/ntv3_100m_final",
+  "width": 768,
+  "readouts": [
+    {
+      "label": "NTv3 100M probe (h(alt) - h(ref))",
+      "kind": "probe",
+      "spearman": 0.11612871690459109,
+      "ci": [
+        0.08636185335521863,
+        0.14556742037575848
+      ],
+      "features": 768
+    },
+    {
+      "label": "NTv3 100M probe, reference only (control)",
+      "kind": "probe",
+      "spearman": -0.035972751217505795,
+      "ci": [
+        -0.06632939315139537,
+        -0.004271677609763156
+      ],
+      "features": 768
+    },
+    {
+      "label": "1/2/3-mer delta",
+      "kind": "baseline",
+      "spearman": 0.17685510370295074,
+      "ci": [
+        0.146697982151155,
+        0.20436569169636654
+      ],
+      "features": 84
+    },
+    {
+      "label": "GC content",
+      "kind": "baseline",
+      "spearman": -0.023993549217283455,
+      "ci": [
+        -0.05478902394092087,
+        0.007619061780222658
+      ],
+      "features": 1
+    }
+  ],
+  "layer": "core.transformer_blocks.5.final_layer_norm",
+  "checkpoint": "InstaDeepAI/NTv3_100M_pre",
+  "feature": "h(alt) - h(ref), mean pooled, same layer both sides"
+}
