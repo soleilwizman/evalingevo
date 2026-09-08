@@ -1,17 +1,0 @@
-Loading weights:   0%|          | 0/297 [00:00<?, ?it/s]Loading weights: 100%|██████████| 297/297 [00:00<00:00, 5131.27it/s]
-2595 elements, 200 bp padded to 256, pooling token positions 28:228 on cuda:0
-[transformers] `use_return_dict` is deprecated! Use `return_dict` instead!
-  0/2595
-  200/2595
-  400/2595
-  600/2595
-  800/2595
-  1000/2595
-  1200/2595
-  1400/2595
-  1600/2595
-  1800/2595
-  2000/2595
-  2200/2595
-  2400/2595
-wrote results/ntv3_650m_probe/X_mean.npy and X_last.npy, width 1536
