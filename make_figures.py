@@ -62,6 +62,12 @@ def probe_margin(path):
     return tuple(float(g) for g in match.groups())
 
 
+LAYER_NOTE = ("Probes read one frozen layer, mean pooled unless stated: Evo 2 blocks.26.mlp.l3 (width 4096); "
+              "NTv3 100M core.transformer_blocks.5.final_layer_norm (768);\n"
+              "NTv3 650M core.transformer_blocks.11.final_layer_norm (1536). Block 5 and block 11 are each "
+              "model's last; Evo 2's is mid-stack. See LAYERS.md.")
+
+
 ELEMENT_CAPTION = (
     "What the bars are.  Each bar is the Spearman rank correlation between one readout's prediction and the measured\n"
     "activity of the same 200 bases: the log2 RNA/DNA ratio of the reference sequence in the Siraj et al. K562 MPRA,\n"
@@ -295,7 +301,8 @@ def main():
     figure.suptitle("Frozen genomic language models against cheap sequence baselines",
                     fontsize=13, color=INK, x=0.012, ha="left", y=0.995)
     legend(figure, ["baseline", "likelihood", "probe", "combined"])
-    figure.tight_layout(rect=(0, 0.045, 1, 0.975))
+    figure.tight_layout(rect=(0, 0.075, 1, 0.975))
+    figure.text(0.012, 0.048, LAYER_NOTE, fontsize=8, color=MUTED, ha="left", va="bottom")
     first = args.out / "benchmark.png"
     figure.savefig(first, dpi=200, facecolor="white")
     plt.close(figure)
@@ -320,7 +327,8 @@ def main():
     figure.suptitle("Does the model beat the baseline? Anything crossing zero does not.",
                     fontsize=13, color=INK, x=0.012, ha="left", y=0.995)
     legend(figure, ["likelihood", "probe", "combined"])
-    figure.tight_layout(rect=(0, 0.055, 1, 0.965))
+    figure.tight_layout(rect=(0, 0.095, 1, 0.965))
+    figure.text(0.012, 0.052, LAYER_NOTE, fontsize=8, color=MUTED, ha="left", va="bottom")
     second = args.out / "margin_over_baseline.png"
     figure.savefig(second, dpi=200, facecolor="white")
     plt.close(figure)
@@ -353,7 +361,8 @@ def main():
     axis.set_xlabel("out-of-fold Spearman correlation with the measurement",
                     fontsize=9, color=MUTED)
     legend(figure, ["baseline", "likelihood", "probe"])
-    figure.tight_layout(rect=(0, 0.09, 1, 1.0))
+    figure.tight_layout(rect=(0, 0.20, 1, 1.0))
+    figure.text(0.012, 0.10, LAYER_NOTE, fontsize=8, color=MUTED, ha="left", va="bottom")
     fourth = args.out / "element_activity_probes_only.png"
     figure.savefig(fourth, dpi=200, facecolor="white")
     plt.close(figure)
