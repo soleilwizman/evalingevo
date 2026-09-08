@@ -45,6 +45,11 @@
         "Evo 2 probe, mean pooled",
         0.5051,
         "probe"
+      ],
+      [
+        "Evo 2 probe + k-mers",
+        0.5144,
+        "combined"
       ]
     ],
     "margins": [

@@ -184,7 +184,8 @@ def probe(embeddings, pooling="mean", pred=PRED, audit=AUDIT, folds=5,
     for name, feat in [("Evo score (1 feature)", el[["s_wt"]].values),
                        ("GC content (1 feature)", gc),
                        ("DNA word counts (84 features)", km),
-                       (probe_name, X)]:
+                       (probe_name, X),
+                       (f"{probe_name} + word counts", np.hstack([X, km]))]:
         preds[name] = out_of_fold(feat, y, g, folds)
         rows.append((name, spearmanr(preds[name], y).statistic,
                      float(np.sqrt(np.mean((preds[name] - y) ** 2)))))

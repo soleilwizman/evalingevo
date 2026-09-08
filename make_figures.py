@@ -78,6 +78,11 @@ ELEMENT_CAPTION = (
     "width 768 for 100M and 1536 for 650M.  Model weights are never updated.  The likelihood bar is the model's own\n"
     "sequence score with nothing fitted on top.\n"
     "\n"
+    "What \"+ k-mers\" means.  The embedding columns and the 84 word-count columns glued side by side into one\n"
+    "feature matrix, with a single ridge fitted on all of it at once.  Not an ensemble, and not extra information given\n"
+    "to the model: it asks whether the embedding carries anything the letter counts do not, which a probe sitting just\n"
+    "below the k-mer line cannot answer on its own.\n"
+    "\n"
     "What the 0.996 cap means.  It is the reliability of the measurement itself, sqrt(1 - mean SE\u00b2 / var(activity)).\n"
     "A predictor that knew each element's true activity exactly would still correlate only that well with these noisy\n"
     "readings, so it is the highest score anything could reach here.\n"
@@ -121,6 +126,8 @@ def collect(results):
         ("NTv3 650M probe + k-mers", probe_value(n650, "NTv3 hidden layer + word counts"), "combined"),
         ("NTv3 100M probe + k-mers", probe_value(n100, "NTv3 hidden layer + word counts"), "combined"),
         ("Evo 2 probe, mean pooled", probe_value(evo, "Evo hidden layer blocks.26.mlp.l3 (probe)"), "probe"),
+        ("Evo 2 probe + k-mers",
+         probe_value(evo, "Evo hidden layer blocks.26.mlp.l3 (probe) + word counts"), "combined"),
     ]
     element_margins = [
         ("Evo 2 probe, mean pooled", *probe_margin(evo), "probe"),
@@ -319,7 +326,7 @@ def main():
     plt.close(figure)
 
     # The element panel on its own, with the method spelled out underneath.
-    figure, axis = plt.subplots(1, 1, figsize=(11.4, 8.2))
+    figure, axis = plt.subplots(1, 1, figsize=(11.4, 10.2))
     figure.patch.set_facecolor("white")
     bar_panel(axis, data["element"])
     axis.set_xlabel("out-of-fold Spearman correlation with the measurement",
@@ -328,16 +335,31 @@ def main():
                           label=KIND_LABEL[k])
                for k in ("baseline", "likelihood", "probe", "combined")]
     figure.legend(handles=handles, loc="upper center", ncol=4, frameon=False,
-                  fontsize=9, labelcolor=INK, bbox_to_anchor=(0.5, 0.545))
-    figure.tight_layout(rect=(0, 0.565, 1, 1.0))
-    figure.text(0.012, 0.485, ELEMENT_CAPTION, fontsize=8.4, color=INK,
+                  fontsize=9, labelcolor=INK, bbox_to_anchor=(0.5, 0.535))
+    figure.tight_layout(rect=(0, 0.555, 1, 1.0))
+    figure.text(0.012, 0.50, ELEMENT_CAPTION, fontsize=8.4, color=INK,
                 ha="left", va="top", linespacing=1.5)
     third = args.out / "element_activity_captioned.png"
     figure.savefig(third, dpi=200, facecolor="white")
     plt.close(figure)
 
+    # Probe against probe, with the supervised combinations dropped: the same
+    # question asked of each model's embedding with nothing else in the fit.
+    probes_only = dict(data["element"])
+    probes_only["rows"] = [r for r in data["element"]["rows"] if r[2] != "combined"]
+    figure, axis = plt.subplots(1, 1, figsize=(11.4, 4.6))
+    figure.patch.set_facecolor("white")
+    bar_panel(axis, probes_only)
+    axis.set_xlabel("out-of-fold Spearman correlation with the measurement",
+                    fontsize=9, color=MUTED)
+    legend(figure, ["baseline", "likelihood", "probe"])
+    figure.tight_layout(rect=(0, 0.09, 1, 1.0))
+    fourth = args.out / "element_activity_probes_only.png"
+    figure.savefig(fourth, dpi=200, facecolor="white")
+    plt.close(figure)
+
     (args.out / "figure_data.json").write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote {first}\nwrote {second}\nwrote {third}\nwrote {args.out / 'figure_data.json'}")
+    print(f"wrote {first}\nwrote {second}\nwrote {third}\nwrote {fourth}\nwrote {args.out / 'figure_data.json'}")
 
 
 if __name__ == "__main__":
