@@ -149,8 +149,9 @@ activations and probing the contrast `h(A) + h(B) - h(WT) - h(AB)` against recod
 existing element-level probes predict reference activity; `variant_probe.py` adds a single-variant
 contrast, but nothing yet probes the two-variant quartet. On the element task the two NTv3
 checkpoints tie 1/2/3-mer counts **when read at the transformer bottleneck**
-(100M -0.0131 [-0.0404, +0.0133], 650M -0.0157 [-0.0477, +0.0153]) but Evo 2 beats them,
-+0.0490 [+0.0150, +0.0809] on `paired_interval`. That Evo number was never
+(100M -0.0131 [-0.0404, +0.0133], 650M -0.0157 [-0.0477, +0.0153]) while Evo 2 clears them,
++0.0490 [+0.0150, +0.0809] on `paired_interval`. **That Evo margin does not survive a fair
+baseline; see the k-mer ladder below.** That Evo number was never
 reported before: `evo_probe.probe` computed every row and then died on a KeyError, because the row
 was named "Evo probe (blocks.26.mlp.l3 layer)" while `paired_interval` looked up "Evo hidden layer
 (probe)". Element-level reference activity is still not the interaction task.
@@ -171,6 +172,33 @@ per-base logits). Reading 650M at `deconv_7` instead of `transformer_11`:
 GC (+0.3248), word counts (+0.4560) and the mean RMSE (1.7194) are identical across the bottleneck
 and deconv runs, which confirms the same folds, so **+0.4403 against +0.4847 is a solid
 within-protocol result: the bottleneck was the wrong place to read NTv3.**
+
+**The 84-feature k-mer baseline is too weak, and raising it removes Evo 2's win.** `kmers` in
+`evo_probe.py` counts overlapping 1, 2 and 3-mers, 84 features, and every probe in the repo is
+scored against it. `kmer_ladder.py` re-runs the same paired interval against richer count vectors
+on the same folds and estimator:
+
+Margins are Spearman over the baseline, with the seed count that clears zero:
+
+| baseline | features | baseline rho | conv_2 | deconv_7 | Evo 2 blocks.26 | transformer_11 |
+|---|---|---|---|---|---|---|
+| 1-3-mer (current) | 84 | +0.4560 | +0.1094 10/10 | +0.0287 7/10 | +0.0490 10/10 | -0.0157 0/10 |
+| 1-4-mer | 340 | +0.5030 | +0.0625 10/10 | -0.0183 0/10 | +0.0021 0/10 | -0.0627 0/10 |
+| 1-5-mer | 1364 | +0.5285 | +0.0370 10/10 | -0.0437 0/10 | -0.0234 0/10 | -0.0882 0/10 |
+| 6-mer only | 4096 | +0.5294 | +0.0360 10/10 | -0.0447 0/10 | -0.0244 0/10 | -0.0891 0/10 |
+| **1-6-mer** | 5460 | **+0.5384** | **+0.0271 1/10** | -0.0537 0/10 | -0.0333 0/10 | -0.0981 0/10 |
+
+The strongest baseline is the full 1-6-mer vector at +0.5384, above every probe in the repo
+including Evo 2's +0.5051. **Against it, nothing wins.** `conv_2` is level (+0.0271, 1 of 10 seeds),
+and every other representation loses outright. Evo 2's +0.0490 over 84 features was an artifact of
+the baseline: it falls to +0.0021 against 1-4-mers and goes negative above that.
+
+So the defensible claim is that these element-level representations are level with or worse than
+counting short words, with NTv3's early conv tower the closest to an exception. Its win survives
+four of the five rungs but not the richest one, and its layer was chosen from a curve of eight.
+Never quote a margin over 1/2/3-mer counts without naming that as the baseline. (5460 features on
+2595 elements is heavily overparameterised, but the alpha is chosen inside each training fold and
+scoring is out of fold, so the baseline cannot be inflated by leakage.)
 
 **The margin against word counts is not.** Its lower bound sits on zero. Across ten bootstrap seeds
 at the default `n_boot=1000` it lands between -0.0012 and +0.0017 and clears zero in 7 of 10; at
