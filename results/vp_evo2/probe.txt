@@ -1,0 +1,13 @@
+n=5428  Evo 2 evo2_7b_base blocks.26.mlp.l3  width 4096  target signed
+pooled over bases, 200.0 per sequence, grouped 5-fold seed 0
+measurement reliability 0.7346, so no predictor of the signed effect can exceed 0.8571
+
+                                     Spearman     RMSE   within-element
+variant position + side (2)          -0.0368   0.4095   0.491
+k-mer difference (84)                +0.1735   0.4035   0.556
+reference embedding only (control)   -0.0133   0.4145   0.501
+difference, mean pooled              +0.1681   0.3995   0.568
+difference, at the variant unit      +0.1097   0.4082   0.534
+predict the mean                     +0.0000   0.4094   0.500
+
+within-element column: 5585 pairs sharing an element, ranked on which variant matters more. Chance is 0.500 and knowing the element cannot help, so this is the variant question on its own.

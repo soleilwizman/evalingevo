@@ -1,11 +1,11 @@
 n=2595  layer blocks.26.mlp.l3  pooling mean  width 4096
 
-                                Spearman     RMSE
-Evo score (1 feature)           +0.0059   1.7143
-GC content (1 feature)          +0.3248   1.6109
-DNA word counts (84 features)   +0.4560   1.4618
-Evo hidden layer (probe)        +0.5051   1.2224
-predict the mean                +0.0000   1.7194
+                                     Spearman     RMSE
+Evo score (1 feature)                +0.0059   1.7143
+GC content (1 feature)               +0.3248   1.6109
+DNA word counts (84 features)        +0.4560   1.4618
+Evo probe (blocks.26.mlp.l3 layer)   +0.5051   1.2224
+predict the mean                     +0.0000   1.7194
 
 noise floor from 20 label permutations: -0.0018 +/- 0.1252
 
