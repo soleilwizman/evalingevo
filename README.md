@@ -190,17 +190,25 @@ how strongly the element actually drives transcription. There is no a priori
 reason a likelihood should track an activity, and the two are not
 interchangeable.
 
-The reason the comparison is still worth making is what an enhancer is for. Its
-only job is turning genes on. Selection acts on that function, so a model that
-had genuinely internalized regulatory grammar during pretraining would have
-some reason to rank functional regulatory sequences as more plausible. To that
-extent, "does this sequence look natural" and "does this sequence drive
-expression" become versions of the same question. Measuring the correlation and
-RMSE between naturalness and activity is therefore a test of whether pretraining
-on naturalness alone captured regulatory function, without ever training on a
-functional label. If the score tracks activity, naturalness carried function; if
-it does not, either the function is not in the model or it is in there but not
-surfaced by the likelihood. The probe in Part 4 is what separates those two.
+We do not expect naturalness to track activity, and this comparison is a null
+test, not a bet that it will. A non-active sequence can easily be the natural
+form: most of the genome is typical and does nothing regulatory, so a sequence
+can be plausible and silent. Naturalness is also a property of the reference
+sequence with no cell in it, while activity is cell-specific, so a pan-genome
+score cannot see the one variable K562 activity depends on. The only reason to
+expect any signal at all is indirect and weak: active elements are under
+selection to keep the motif grammar that makes them work, so their sequences
+carry constraint a genome model might have absorbed as typical. That is a
+shared-cause story, not a mechanism, and it predicts a small effect at most.
+
+So the correlation and RMSE between naturalness and activity are run to
+establish the null, not to confirm an expectation. The result confirms it: the
+zero-shot score is flat against activity for every model (Evo 2 −0.018, both
+NTv3 checkpoints negative), and a single GC number out-predicts all of them. The
+value of that null is what it licenses next. Once the score is shown to carry no
+activity signal, a probe that reads activity out of the same model's embeddings
+(Part 4) means the function is in the representation but not in the likelihood.
+Without the null, that claim could not be made.
 
 ### The two baselines every readout has to beat
 
@@ -384,6 +392,24 @@ tiebreak, where chance is 0.500 and knowing the element cannot help, Evo 2
 reaches 0.568, the k-mer delta 0.556 and DNABERT-2 0.518, so Evo 2 carries a
 little genuine within-element variant information, just not enough to clear the
 baseline overall.
+
+Two caveats keep this panel from being read too hard on its own. Evo 2's +0.168
+is on its own folds and n, not the shared protocol, so it cannot be ranked
+cleanly against the +0.177 baseline; and NTv3 650M is read at the two-position
+bottleneck, which the element panel shows understates it, so its variant bar is
+the wrong-layer read. Until Evo 2 variant embeddings and NTv3 deconv variant
+embeddings are run on the shared protocol, this is the least-supported of the
+probe panels.
+
+The reason the variant result matters is the contrast with whole element, not
+its own number. It is the middle rung of a gradient that runs alongside the
+reliability of the three targets: on whole element the embeddings clear the
+baseline (+0.049), on single variants they do not, and on the two-variant
+interaction the signal is flat everywhere. That gradient is the finding. It turns
+"the model fails at epistasis" into the sharper "the model recognizes what an
+element is but not what one edit does to it, and less still how two edits
+combine," which is what the interaction probe in the next steps is meant to test
+head-on.
 
 ### The guardrails
 
