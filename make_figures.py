@@ -62,6 +62,31 @@ def probe_margin(path):
     return tuple(float(g) for g in match.groups())
 
 
+ELEMENT_CAPTION = (
+    "What the bars are.  Each bar is the Spearman rank correlation between one readout's prediction and the measured\n"
+    "activity of the same 200 bases: the log2 RNA/DNA ratio of the reference sequence in the Siraj et al. K562 MPRA,\n"
+    "one value for each of 2,595 distinct reference 200-mers.  Higher means the readout orders elements more like the\n"
+    "assay does.  Rank correlation, so it judges ordering only, not whether the numbers are on the same scale.\n"
+    "\n"
+    "How the predictions were made.  Every value is out-of-fold.  The 2,595 sequences are split into five folds by\n"
+    "overlapping-region group, so near-identical 200-mers never land on opposite sides of a split, and anything fitted\n"
+    "(ridge regression, for the multi-column features) sees only the four training folds.  No sequence helps produce the\n"
+    "number that scores it.  Folds are taken in order, not shuffled.\n"
+    "\n"
+    "What a probe is.  One frozen hidden layer read out of the model and averaged across the sequence, then a linear\n"
+    "fit from those numbers to activity: Evo 2 at blocks.26.mlp.l3, width 4096; NTv3 at its final transformer block,\n"
+    "width 768 for 100M and 1536 for 650M.  Model weights are never updated.  The likelihood bar is the model's own\n"
+    "sequence score with nothing fitted on top.\n"
+    "\n"
+    "What the 0.996 cap means.  It is the reliability of the measurement itself, sqrt(1 - mean SE\u00b2 / var(activity)).\n"
+    "A predictor that knew each element's true activity exactly would still correlate only that well with these noisy\n"
+    "readings, so it is the highest score anything could reach here.\n"
+    "\n"
+    "How much precision to read into a gap.  Refitting one probe under six different fold shuffles moves it by 0.009.\n"
+    "Differences narrower than that are fold-draw noise, not findings."
+)
+
+
 def element_ceiling(predictions, audit):
     """Reliability of the measured element activity, same diagnostic used elsewhere."""
     pred, table = pd.read_csv(predictions), pd.read_csv(audit)
@@ -293,8 +318,26 @@ def main():
     figure.savefig(second, dpi=200, facecolor="white")
     plt.close(figure)
 
+    # The element panel on its own, with the method spelled out underneath.
+    figure, axis = plt.subplots(1, 1, figsize=(11.4, 8.2))
+    figure.patch.set_facecolor("white")
+    bar_panel(axis, data["element"])
+    axis.set_xlabel("out-of-fold Spearman correlation with the measurement",
+                    fontsize=9, color=MUTED)
+    handles = [plt.Line2D([], [], marker="s", ls="", ms=9, color=COLOR[k],
+                          label=KIND_LABEL[k])
+               for k in ("baseline", "likelihood", "probe", "combined")]
+    figure.legend(handles=handles, loc="upper center", ncol=4, frameon=False,
+                  fontsize=9, labelcolor=INK, bbox_to_anchor=(0.5, 0.545))
+    figure.tight_layout(rect=(0, 0.565, 1, 1.0))
+    figure.text(0.012, 0.485, ELEMENT_CAPTION, fontsize=8.4, color=INK,
+                ha="left", va="top", linespacing=1.5)
+    third = args.out / "element_activity_captioned.png"
+    figure.savefig(third, dpi=200, facecolor="white")
+    plt.close(figure)
+
     (args.out / "figure_data.json").write_text(json.dumps(data, indent=2) + "\n")
-    print(f"wrote {first}\nwrote {second}\nwrote {args.out / 'figure_data.json'}")
+    print(f"wrote {first}\nwrote {second}\nwrote {third}\nwrote {args.out / 'figure_data.json'}")
 
 
 if __name__ == "__main__":
