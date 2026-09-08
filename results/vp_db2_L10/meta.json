@@ -1,0 +1,11 @@
+{
+  "model": "dnabert2",
+  "checkpoint": "zhihan1996/DNABERT-2-117M",
+  "layer": "10",
+  "label": "DNABERT-2 block 10 of 12",
+  "units": "token",
+  "units_per_sequence": 40.6458930574598,
+  "n_observations": 5428,
+  "n_sequences": 8023,
+  "width": 768
+}
