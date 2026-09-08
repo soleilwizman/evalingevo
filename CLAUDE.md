@@ -30,6 +30,8 @@ python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
 python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
 python3 recoding_bias.py                              # what recoding changes, and the zero-interaction null
 python3 model_comparison.py                           # one cross-model figure, same-protocol panels only
+python3 probe_interval.py results/<dir>                # margin + interval only, ~30s, skips the slow null
+python3 ntv3_unet.py list --offline --num-layers 12    # which hidden_states index is per-base
 
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
 python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
@@ -144,9 +146,36 @@ Committed embeddings: `results/evo_probe` (Evo 2, `blocks.26.mlp.l3`, width 4096
 
 The interaction probe, which is the point of Aim 2, has no code: extracting matched WT/A/B/AB
 activations and probing the contrast `h(A) + h(B) - h(WT) - h(AB)` against recoded epsilon. The
-existing probes are element-level only, predicting reference activity. On that task the two NTv3
-checkpoints tie 1/2/3-mer counts (100M -0.0131 [-0.0404, +0.0133], 650M -0.0157 [-0.0477, +0.0153])
-but Evo 2 beats them, +0.0490 [+0.0150, +0.0809] on `paired_interval`. That Evo number was never
+existing element-level probes predict reference activity; `variant_probe.py` adds a single-variant
+contrast, but nothing yet probes the two-variant quartet. On the element task the two NTv3
+checkpoints tie 1/2/3-mer counts **when read at the transformer bottleneck**
+(100M -0.0131 [-0.0404, +0.0133], 650M -0.0157 [-0.0477, +0.0153]) but Evo 2 beats them,
++0.0490 [+0.0150, +0.0809] on `paired_interval`. That Evo number was never
 reported before: `evo_probe.probe` computed every row and then died on a KeyError, because the row
 was named "Evo probe (blocks.26.mlp.l3 layer)" while `paired_interval` looked up "Evo hidden layer
 (probe)". Element-level reference activity is still not the interaction task.
+
+**The bottleneck was the wrong place to read NTv3, and that changes its result.** With 7
+downsamples a 200-mer padded to 256 is 2 positions at `core.transformer_blocks.<i>`, so pooling
+there averages two vectors. `ntv3_unet.py` reads the deconv tower instead, where `hidden_states[-1]`
+is one vector per input token (the stage the LM head consumes, which is why `ntv3_score.py` gets
+per-base logits). Reading 650M at `deconv_7` instead of `transformer_11`:
+
+| representation | Spearman | RMSE | margin vs word counts |
+|---|---|---|---|
+| word counts (84 feat) | +0.4560 | 1.4618 | |
+| 650M `transformer_11` (2 positions) | +0.4403 | 1.3869 | -0.0157 [-0.0477, +0.0153] |
+| 650M `deconv_7` (per-base) | +0.4847 | 1.3379 | +0.0287, interval not yet computed |
+| 650M `deconv_7` + word counts | +0.5000 | 1.3307 | |
+
+Read off the console of a GPU run on 2026-09-08; the matrices are not committed and
+`paired_interval` had not finished, so the +0.0287 has no interval yet and must not be quoted as a
+win until `probe_interval.py results/ntv3_650m_deconv` reports one. GC (+0.3248), word counts
+(+0.4560) and the mean RMSE (1.7194) came out identical to the bottleneck run, which confirms the
+two used the same folds, so +0.4403 against +0.4847 is a within-protocol comparison.
+
+BEND's convention for a model coarser than one vector per base is to repeat each vector across the
+span its token covers (`upsample_embeddings=True`). For a pooled element embedding here that is
+provably a no-op: the 200 real bases split exactly 100/100 across the two bottleneck positions, so
+repeat-then-pool equals plain pooling to 3.6e-07. The committed bottleneck margins already are the
+BEND-convention answer; only the learned deconv tower can differ.
