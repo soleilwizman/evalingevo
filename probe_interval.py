@@ -32,6 +32,10 @@ def main():
     parser.add_argument("--pooling", default="mean")
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--n-boot", type=int, default=1000, dest="n_boot")
+    parser.add_argument("--seeds", type=int, default=1,
+                        help="repeat the bootstrap under this many seeds. Near zero the "
+                             "printed verdict can be decided by the seed rather than the "
+                             "data, so use this before calling a narrow margin a win")
     args = parser.parse_args()
 
     directory = Path(args.embeddings)
@@ -50,13 +54,24 @@ def main():
     words = out_of_fold(kmers(seqs), y, groups, args.folds)
     rho_probe = float(spearmanr(probe, y).statistic)
     rho_words = float(spearmanr(words, y).statistic)
-    low, high = paired_interval(probe, words, y, groups, args.n_boot)
+    bounds = [paired_interval(probe, words, y, groups, args.n_boot, seed)
+              for seed in range(args.seeds)]
+    low, high = bounds[0]
 
     print(f"{directory}   n={len(el)}   pooling {args.pooling}   width {X.shape[1]}")
     print(f"  probe        {rho_probe:+.4f}")
     print(f"  word counts  {rho_words:+.4f}")
     print(f"  margin       {rho_probe - rho_words:+.4f}  95% interval "
           f"[{low:+.4f}, {high:+.4f}]")
+    if args.seeds > 1:
+        lows = np.array([b[0] for b in bounds])
+        cleared = int((lows > 0).sum())
+        print(f"  lower bound over {args.seeds} seeds: min {lows.min():+.4f}, "
+              f"max {lows.max():+.4f}, clears zero {cleared}/{args.seeds}")
+        if cleared not in (0, args.seeds):
+            raise SystemExit("  ON THE BOUNDARY: the verdict changes with the bootstrap "
+                             "seed, so this is not a win. Report the margin and the "
+                             "seed spread, not a pass/fail.")
     print("  clears zero: the representation beats letter counting."
           if low > 0 else
           "  crosses zero: not distinguishable from letter counting on this evidence.")

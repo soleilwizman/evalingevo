@@ -165,14 +165,21 @@ per-base logits). Reading 650M at `deconv_7` instead of `transformer_11`:
 |---|---|---|---|
 | word counts (84 feat) | +0.4560 | 1.4618 | |
 | 650M `transformer_11` (2 positions) | +0.4403 | 1.3869 | -0.0157 [-0.0477, +0.0153] |
-| 650M `deconv_7` (per-base) | +0.4847 | 1.3379 | +0.0287, interval not yet computed |
+| 650M `deconv_7` (per-base) | +0.4847 | 1.3379 | +0.0287 [+0.0007, +0.0564] |
 | 650M `deconv_7` + word counts | +0.5000 | 1.3307 | |
 
-Read off the console of a GPU run on 2026-09-08; the matrices are not committed and
-`paired_interval` had not finished, so the +0.0287 has no interval yet and must not be quoted as a
-win until `probe_interval.py results/ntv3_650m_deconv` reports one. GC (+0.3248), word counts
-(+0.4560) and the mean RMSE (1.7194) came out identical to the bottleneck run, which confirms the
-two used the same folds, so +0.4403 against +0.4847 is a within-protocol comparison.
+GC (+0.3248), word counts (+0.4560) and the mean RMSE (1.7194) are identical across the bottleneck
+and deconv runs, which confirms the same folds, so **+0.4403 against +0.4847 is a solid
+within-protocol result: the bottleneck was the wrong place to read NTv3.**
+
+**The margin against word counts is not.** Its lower bound sits on zero. Across ten bootstrap seeds
+at the default `n_boot=1000` it lands between -0.0012 and +0.0017 and clears zero in 7 of 10; at
+`n_boot=20000` it settles at +0.0004. `results/ntv3_650m_deconv/probe.txt` prints "The information
+is in there, and it beats word counts" because seed 0 happened to fall on the positive side. Do not
+quote that line. The defensible claim is that 650M read per-base is level with 1/2/3-mer counts
+and clearly above the same checkpoint read at the bottleneck. `probe_interval.py --seeds 10` refuses
+to return a pass/fail when the seeds disagree, which is the check to run before calling any narrow
+margin a win.
 
 BEND's convention for a model coarser than one vector per base is to repeat each vector across the
 span its token covers (`upsample_embeddings=True`). For a pooled element embedding here that is
