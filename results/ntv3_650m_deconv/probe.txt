@@ -1,0 +1,12 @@
+n=2595  InstaDeepAI/NTv3_650M_pre  layer deconv_7 (U-Net deconv tower)  pooling mean  width 1536
+
+                                  Spearman     RMSE
+GC content (1 feature)            +0.3248   1.6109
+DNA word counts (84 features)     +0.4560   1.4618
+NTv3 hidden layer (probe)         +0.4847   1.3379
+NTv3 hidden layer + word counts   +0.5000   1.3307
+predict the mean                  +0.0000   1.7194
+
+noise floor from 20 label permutations: -0.0019 +/- 0.0951
+probe minus word counts: +0.0287  95% interval [+0.0007, +0.0564]
+The information is in there, and it beats word counts.
