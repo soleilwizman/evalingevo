@@ -194,15 +194,35 @@ class NTv3Adapter:
         target = -(-len(sequence) // NTV3_MULTIPLE) * NTV3_MULTIPLE
         left = (target - len(sequence)) // 2
         padded = "N" * left + sequence + "N" * (target - len(sequence) - left)
-        ids = self.torch.tensor([self.tok(padded, add_special_tokens=True)["input_ids"]],
-                                dtype=self.torch.long, device=self.device)
+        tid = self.tok(padded, add_special_tokens=True)["input_ids"]
+        ids = self.torch.tensor([tid], dtype=self.torch.long, device=self.device)
         span = slice(self.offset + left, self.offset + left + len(sequence))
-        got = "".join(self.tok.convert_ids_to_tokens(ids[0, span].tolist()))
+        got = "".join(self.tok.convert_ids_to_tokens(tid[span]))
         if got != sequence:
             raise SystemExit(f"token alignment wrong: {got[:20]} vs {sequence[:20]}")
         with self.torch.inference_mode():
             states = self.model(input_ids=ids, output_hidden_states=True).hidden_states
-        return states[self.layer][0, span].float(), np.arange(len(sequence))
+        return self._align(states[self.layer][0].float(), tid, span, len(sequence))
+
+
+    def _align(self, state, tid, span, n):
+        """NTv3 is a U-Net: deeper hidden states are downsampled, so a layer is
+        not always one vector per base. Measure the factor and map each base to
+        the unit covering it, the way a BPE token covers several bases."""
+        if state.shape[0] == len(tid):
+            self.units = "base"
+            return state[span], np.arange(n)
+        factor = int(round(len(tid) / state.shape[0]))
+        if factor < 1:
+            raise SystemExit(f"layer {self.layer} gave {state.shape[0]} positions for "
+                             f"{len(tid)} tokens, longer than the input")
+        self.units = f"downsampled-{factor}x"
+        unit = np.arange(span.start, span.stop) // factor
+        first, last = int(unit[0]), int(unit[-1])
+        if last >= state.shape[0]:
+            raise SystemExit(f"layer {self.layer} downsamples {factor}x to "
+                             f"{state.shape[0]} positions; bases need unit {last}")
+        return state[first:last + 1], unit - first
 
     def close(self):
         pass
