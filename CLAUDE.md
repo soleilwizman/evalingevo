@@ -183,6 +183,35 @@ the spread, and exits nonzero instead of returning a verdict. A clear margin sti
 draw (Evo's +0.0490 [+0.0150, +0.0809] does not escalate). The same binary verdict line in
 `evo_probe.probe` and `ntv3_probe.probe` has no such guard, so near zero it is decided by seed 0.
 
+**`deconv_7` is not the best place to read NTv3, and `results/ntv3_650m_sweep` already held the
+answer.** `X_mean_L25.npy` in that sweep is bit-identical to `results/ntv3_650m_deconv/X_mean.npy`
+(max abs diff 0.0), so the deconv representation was committed before `ntv3_unet.py` existed; nobody
+had probed L25. Index map for the 650M sweep: L0-L6 are `conv_1..conv_7`, L7-L18 the transformer
+blocks, L19-L25 `deconv_1..deconv_7`. Probing the usable ones on the same folds and baseline
+(k-mers +0.4560), with the 10-seed check:
+
+| layer | positions | rho | margin vs k-mers | seeds clearing |
+|---|---|---|---|---|
+| L1 `conv_2` | 128 | +0.5655 | +0.1094 [+0.0808, +0.1382] | 10/10 |
+| L2 `conv_3` | 64 | +0.5607 | (residual +0.3962, best) | |
+| L0 `conv_1` | 256 | +0.5533 | | |
+| L24 `deconv_6` | 128 | +0.4983 | +0.0422 [+0.0154, +0.0691] | 10/10 |
+| L25 `deconv_7` | 256 | +0.4847 | +0.0287 [+0.0007, +0.0564] | 7/10 |
+| `transformer_11` (hook) | 2 | +0.4403 | -0.0157 [-0.0477, +0.0153] | 0/10 |
+
+So the early conv tower wins outright, `deconv_6` beats `deconv_7`, and the +0.1094 margin at L1 is
+more than double Evo 2's +0.0490 [+0.0150, +0.0809] at `blocks.26.mlp.l3` on the same protocol.
+Layer choice here follows seeing the numbers, which `layer_curve.py` warns about, but L1's lower
+bound of +0.0808 is nowhere near the boundary.
+
+**18 of the 26 sweep matrices are unusable: L4 through L21 are 100% NaN in float32.** That covers
+`conv_5..conv_7`, every transformer block, and `deconv_1..deconv_3`. It is corruption rather than a
+model property, because `deconv_4` (L22) is finite while the `deconv_3` it is computed from is NaN,
+which cannot happen in one forward pass, and because `results/ntv3_650m_final` captures
+`transformer_11` via a forward hook with finite values (max 5.17). Those layers need re-running
+before the curve covers the middle of the U. No 100M sweep exists at all, so nothing above the
+bottleneck is measured for that checkpoint.
+
 BEND's convention for a model coarser than one vector per base is to repeat each vector across the
 span its token covers (`upsample_embeddings=True`). For a pooled element embedding here that is
 provably a no-op: the 200 real bases split exactly 100/100 across the two bottleneck positions, so
