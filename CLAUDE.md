@@ -29,6 +29,7 @@ python3 evo_probe.py probe --embeddings results/evo_probe --pooling mean
 python3 ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooling mean
 python3 layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
 python3 recoding_bias.py                              # what recoding changes, and the zero-interaction null
+python3 model_comparison.py                           # one cross-model figure, same-protocol panels only
 
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
 python3 evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
@@ -143,5 +144,9 @@ Committed embeddings: `results/evo_probe` (Evo 2, `blocks.26.mlp.l3`, width 4096
 
 The interaction probe, which is the point of Aim 2, has no code: extracting matched WT/A/B/AB
 activations and probing the contrast `h(A) + h(B) - h(WT) - h(AB)` against recoded epsilon. The
-existing probes are element-level only, predicting reference activity, and they tie 1/2/3-mer
-counts.
+existing probes are element-level only, predicting reference activity. On that task the two NTv3
+checkpoints tie 1/2/3-mer counts (100M -0.0131 [-0.0404, +0.0133], 650M -0.0157 [-0.0477, +0.0153])
+but Evo 2 beats them, +0.0490 [+0.0150, +0.0809] on `paired_interval`. That Evo number was never
+reported before: `evo_probe.probe` computed every row and then died on a KeyError, because the row
+was named "Evo probe (blocks.26.mlp.l3 layer)" while `paired_interval` looked up "Evo hidden layer
+(probe)". Element-level reference activity is still not the interaction task.
