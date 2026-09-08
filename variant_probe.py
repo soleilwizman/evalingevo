@@ -325,11 +325,14 @@ class DNABERT2Adapter:
 ADAPTERS = {"evo2": Evo2Adapter, "ntv3": NTv3Adapter, "dnabert2": DNABERT2Adapter}
 DEFAULT_CHECKPOINT = {"evo2": "evo2_7b_base", "ntv3": "InstaDeepAI/NTv3_100M_pre",
                       "dnabert2": "zhihan1996/DNABERT-2-117M"}
-DEFAULT_LAYER = {"evo2": "blocks.26.mlp.l3", "ntv3": -4, "dnabert2": 10}
+# NTv3: -1 is the post-deconv stage, one vector per input token, which is what the
+# docstring above promises. -4 is the fourth deconv block and still 8x downsampled;
+# see `ntv3_unet.py list --offline` for the full index mapping.
+DEFAULT_LAYER = {"evo2": "blocks.26.mlp.l3", "ntv3": -1, "dnabert2": 10}
 
 
 def embed(out, model="evo2", checkpoint=None, layer=None, weights=None,
-          quartets=QUARTETS, limit=0):
+          quartets=QUARTETS, limit=0, revision="main"):
     obs = observations(quartets)
     if limit:
         obs = obs.head(limit)
@@ -345,6 +348,8 @@ def embed(out, model="evo2", checkpoint=None, layer=None, weights=None,
     kwargs = {"checkpoint": checkpoint, "layer": layer}
     if model == "evo2" and weights:
         kwargs["weights"] = weights
+    if model == "ntv3":
+        kwargs["revision"] = revision
     adapter = ADAPTERS[model](**kwargs)
     print(f"{adapter.label}: {len(obs)} observations, {len(needed)} distinct sequences",
           flush=True)
@@ -594,6 +599,7 @@ def main():
     e.add_argument("--layer", default=None,
                    help="module name for evo2, integer index for ntv3 and dnabert2")
     e.add_argument("--weights", default=None, help="evo2 only")
+    e.add_argument("--revision", default="main", help="ntv3 only; pin the checkpoint commit")
     e.add_argument("--quartets", default=QUARTETS)
     e.add_argument("--limit", type=int, default=0, help="first N observations, smoke run")
 

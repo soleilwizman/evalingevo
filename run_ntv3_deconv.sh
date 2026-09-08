@@ -58,15 +58,31 @@ case "$MODE" in
       | tee "results/ntv3_${SIZE}_deconv_sweep/layer_curve.txt"
     ;;
   variant)
-    # -1 is the post-deconv stage, one vector per base. variant_probe.py's NTv3
-    # default is -4, which is the fourth deconv block and still 8x downsampled.
+    # -1 is the post-deconv stage, one vector per input token. It is now
+    # variant_probe.py's NTv3 default; -4 was the fourth deconv block, still 8x down.
+    # Third argument runs a smoke pass first: bash run_ntv3_deconv.sh variant 650m 40
+    OUT="results/vp_ntv3_${SIZE}_deconv"
+    LIMIT="${3:-0}"
+    EXTRA=()
+    if [ "$LIMIT" != "0" ]; then OUT="results/smoke_vp_ntv3_${SIZE}"; EXTRA=(--limit "$LIMIT"); fi
     python3 variant_probe.py embed --model ntv3 --layer -1 \
-      --checkpoint "$CHECKPOINT" --revision "$REVISION" \
-      --out "results/vp_ntv3_${SIZE}_deconv"
-    python3 variant_probe.py probe --embeddings "results/vp_ntv3_${SIZE}_deconv" \
-      | tee "results/vp_ntv3_${SIZE}_deconv/probe.txt"
-    grep -o '"units": "[^"]*"' "results/vp_ntv3_${SIZE}_deconv/meta.json" \
-      || echo "check meta.json: units should read \"base\""
+      --checkpoint "$CHECKPOINT" --revision "$REVISION" --out "$OUT" "${EXTRA[@]}"
+    # units must read "base"; anything else means the layer index did not take
+    python3 - "$OUT" <<'EOF'
+import json, sys
+meta = json.load(open(f"{sys.argv[1]}/meta.json"))
+print(f"units={meta.get('units')!r}  units_per_sequence={meta.get('units_per_sequence')!r}")
+if meta.get("units") != "base":
+    raise SystemExit("STOP: not per-base. Re-check --layer; see ntv3_unet.py list --offline")
+EOF
+    [ "$LIMIT" != "0" ] && { echo "smoke run OK, now drop the third argument"; exit 0; }
+    # signed is what results/vp_evo2/probe.txt used, so the two are comparable
+    python3 variant_probe.py probe --embeddings "$OUT" --target signed \
+      | tee "$OUT/probe_signed.txt"
+    python3 variant_probe.py probe --embeddings "$OUT" --target magnitude \
+      | tee "$OUT/probe_magnitude.txt"
+    python3 variant_probe.py compare --embeddings results/vp_evo2 "$OUT" --target signed \
+      | tee "$OUT/compare_vs_evo2_signed.txt"
     ;;
   *)
     echo "mode must be map, smoke, element, sweep or variant" >&2; exit 2 ;;
