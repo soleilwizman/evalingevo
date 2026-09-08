@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A benchmark of frozen genomic language models (Evo 2 7B, Nucleotide Transformer v3) against
-measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-one flat Python
+measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-three flat Python
 scripts in `scripts/`, no package, no test suite, no linter config. Run every script from the repo
 root: they import each other by bare module name (which works because `python3 scripts/x.py` puts
 `scripts/` first on `sys.path`) and open `data/` and `results/` by relative path. The README is
@@ -34,12 +34,14 @@ python3 scripts/ntv3_probe.py probe --embeddings results/ntv3_650m_final --pooli
 python3 scripts/layer_curve.py results/ntv3_650m_final        # per-layer curve plus a k-mer-residual control
 python3 scripts/recoding_bias.py                              # what recoding changes, and the zero-interaction null
 python3 scripts/model_comparison.py                           # one cross-model figure, same-protocol panels only
+python3 scripts/eight_readouts.py                             # two panels, eight readouts each: element activity and single-variant effect
 python3 scripts/probe_interval.py results/<dir>                # margin + interval only, ~30s, skips the slow null
 python3 scripts/ntv3_unet.py list --offline --num-layers 12    # which hidden_states index is per-base
 
 # GPU: needs the evo2 package for Evo 2, a Hugging Face login for the gated InstaDeepAI checkpoints
 python3 scripts/evo_epistasis.py score --quartets data/quartets.csv.gz --output results/<dir>/evo_scores.csv --revision <sha>
 python3 scripts/ntv3_score.py --quartets data/quartets.csv.gz --checkpoint NTv3_100M_pre --revision main --output results/<dir>/ntv3_scores.csv
+python3 scripts/dnabert2_score.py --quartets data/quartets.csv.gz --revision <sha> --output results/dnabert2_117m/dnabert2_scores.csv   # needs einops, transformers 4.x
 python3 scripts/evo_probe.py embed --out results/<dir> --layer blocks.26.mlp.l3
 python3 scripts/ntv3_probe.py embed --out results/<dir> --layer 11 --checkpoint InstaDeepAI/NTv3_650M_pre
 python3 scripts/ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out results/<dir>    # all layers, one pass
