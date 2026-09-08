@@ -177,9 +177,11 @@ at the default `n_boot=1000` it lands between -0.0012 and +0.0017 and clears zer
 `n_boot=20000` it settles at +0.0004. `results/ntv3_650m_deconv/probe.txt` prints "The information
 is in there, and it beats word counts" because seed 0 happened to fall on the positive side. Do not
 quote that line. The defensible claim is that 650M read per-base is level with 1/2/3-mer counts
-and clearly above the same checkpoint read at the bottleneck. `probe_interval.py --seeds 10` refuses
-to return a pass/fail when the seeds disagree, which is the check to run before calling any narrow
-margin a win.
+and clearly above the same checkpoint read at the bottleneck. `probe_interval.py` now does this check by
+default: when the 95% lower bound lands within 0.01 of zero it re-bootstraps under 10 seeds, prints
+the spread, and exits nonzero instead of returning a verdict. A clear margin still answers in one
+draw (Evo's +0.0490 [+0.0150, +0.0809] does not escalate). The same binary verdict line in
+`evo_probe.probe` and `ntv3_probe.probe` has no such guard, so near zero it is decided by seed 0.
 
 BEND's convention for a model coarser than one vector per base is to repeat each vector across the
 span its token covers (`upsample_embeddings=True`). For a pooled element embedding here that is
