@@ -1,0 +1,180 @@
+{
+  "element": {
+    "n": 2595,
+    "target": "measured log2 activity of the reference 200-mer",
+    "protocol": "grouped five-fold, folds unshuffled, RidgeCV inside each training fold (element_spearman.py); zero-shot rows are the raw Spearman of the score; 95% interval resamples region groups",
+    "readouts": [
+      {
+        "label": "Evo 2 log-likelihood",
+        "kind": "likelihood",
+        "spearman": -0.01844194075879453,
+        "ci": [
+          -0.059463477523842984,
+          0.02508907079486856
+        ],
+        "features": 1,
+        "zero_shot": true
+      },
+      {
+        "label": "NTv3 650M pseudo-log-likelihood",
+        "kind": "likelihood",
+        "spearman": -0.09939747953330179,
+        "ci": [
+          -0.14060154247234571,
+          -0.05726380011564577
+        ],
+        "features": 1,
+        "zero_shot": true
+      },
+      {
+        "label": "DNABERT-2 pseudo-log-likelihood",
+        "kind": "likelihood",
+        "spearman": null,
+        "ci": null,
+        "not_computed": "no DNABERT-2 scoring run exists"
+      },
+      {
+        "label": "GC content",
+        "kind": "baseline",
+        "spearman": 0.32476905599617467,
+        "ci": [
+          0.2853009603842883,
+          0.3614022907911005
+        ],
+        "features": 1
+      },
+      {
+        "label": "1/2/3-mer counts",
+        "kind": "baseline",
+        "spearman": 0.45602395314995986,
+        "ci": [
+          0.4201520857061616,
+          0.48909945795830084
+        ],
+        "features": 84
+      },
+      {
+        "label": "DNABERT-2 probe (block 11 of 12)",
+        "kind": "probe",
+        "spearman": 0.43802044163697496,
+        "ci": [
+          0.3988162588242231,
+          0.47241061965642717
+        ],
+        "features": 768,
+        "source": "results/vp_db2_L11"
+      },
+      {
+        "label": "NTv3 650M probe (deconv_7)",
+        "kind": "probe",
+        "spearman": 0.4847162784128957,
+        "ci": [
+          0.4474332904193058,
+          0.515717349334918
+        ],
+        "features": 1536,
+        "source": "results/ntv3_650m_deconv"
+      },
+      {
+        "label": "Evo 2 probe (blocks.26.mlp.l3)",
+        "kind": "probe",
+        "spearman": 0.50507380314337,
+        "ci": [
+          0.4691666803191257,
+          0.5394619446460199
+        ],
+        "features": 4096,
+        "source": "results/evo_probe"
+      }
+    ]
+  },
+  "variant": {
+    "n": 5666,
+    "target": "measured log2 effect of one substitution",
+    "protocol": "grouped five-fold shuffled seed 0; ridge for multi-column features (single_variant_spearman.py); zero-shot rows are the raw Spearman of the delta score; 95% interval resamples region groups; probe feature is h(alt) - h(ref), mean pooled",
+    "readouts": [
+      {
+        "label": "Evo 2 delta log-likelihood",
+        "kind": "likelihood",
+        "spearman": -0.018149315238794615,
+        "ci": [
+          -0.04795896775510765,
+          0.009579221314779984
+        ],
+        "features": 1,
+        "zero_shot": true
+      },
+      {
+        "label": "NTv3 650M delta pseudo-log-likelihood",
+        "kind": "likelihood",
+        "spearman": -0.020211805526347,
+        "ci": [
+          -0.049688973481330646,
+          0.009031387712241549
+        ],
+        "features": 1,
+        "zero_shot": true
+      },
+      {
+        "label": "DNABERT-2 delta pseudo-log-likelihood",
+        "kind": "likelihood",
+        "spearman": null,
+        "ci": null,
+        "not_computed": "no DNABERT-2 scoring run exists"
+      },
+      {
+        "label": "GC content",
+        "kind": "baseline",
+        "spearman": -0.023993549217283455,
+        "ci": [
+          -0.05478902394092087,
+          0.007619061780222658
+        ],
+        "features": 1
+      },
+      {
+        "label": "1/2/3-mer delta",
+        "kind": "baseline",
+        "spearman": 0.17685510370295074,
+        "ci": [
+          0.146697982151155,
+          0.20436569169636654
+        ],
+        "features": 84
+      },
+      {
+        "label": "DNABERT-2 probe (block 11 of 12)",
+        "kind": "probe",
+        "spearman": 0.09447797027504785,
+        "ci": [
+          0.06236695169379967,
+          0.12223341293171161
+        ],
+        "features": 768,
+        "source": "results/vp_db2_L11"
+      },
+      {
+        "label": "NTv3 650M probe (block 11, bottleneck)",
+        "kind": "probe",
+        "spearman": 0.09475148650627147,
+        "ci": [
+          0.0678590670927861,
+          0.12014783348651865
+        ],
+        "features": 1536,
+        "source": "results/ntv3_650m_variants",
+        "substitute": "deconv-layer variant embeddings do not exist; this is the transformer bottleneck, block 11"
+      },
+      {
+        "label": "Evo 2 probe (blocks.26.mlp.l3)",
+        "kind": "probe",
+        "spearman": 0.1681,
+        "ci": null,
+        "features": null,
+        "n": 5428,
+        "other_protocol": true,
+        "source": "results/vp_evo2/probe.txt"
+      }
+    ]
+  }
+}
