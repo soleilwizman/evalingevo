@@ -11,8 +11,8 @@ noise, so this script skips it rather than replacing it.)
 Same folds, same estimator, same bootstrap as the full probe, so the number is
 comparable to every committed probe.txt.
 
-    python3 probe_interval.py results/ntv3_650m_deconv
-    python3 probe_interval.py results/evo_probe --pooling mean
+    python3 scripts/probe_interval.py results/ntv3_650m_deconv
+    python3 scripts/probe_interval.py results/evo_probe --pooling mean
 """
 
 import argparse

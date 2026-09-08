@@ -13,7 +13,7 @@ Protocol matches single_variant.py exactly: grouped five-fold shuffled with
 seed 0, ridge for multi-column features, 95% interval resampling whole
 overlapping-region groups.
 
-    python3 single_variant_spearman.py --out results/figures/single_variant_spearman.png
+    python3 scripts/single_variant_spearman.py --out results/figures/single_variant_spearman.png
 """
 
 import argparse

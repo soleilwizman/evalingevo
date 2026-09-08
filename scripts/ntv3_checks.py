@@ -4,8 +4,8 @@
   layer       probe one named layer from an existing sweep directory. CPU.
   likelihood  score the 2,595 reference elements and correlate. GPU.
 
-    python3 ntv3_checks.py layer --embeddings results/ntv3_650m_sweep --layer 11
-    python3 ntv3_checks.py likelihood --checkpoint InstaDeepAI/NTv3_650M_pre
+    python3 scripts/ntv3_checks.py layer --embeddings results/ntv3_650m_sweep --layer 11
+    python3 scripts/ntv3_checks.py likelihood --checkpoint InstaDeepAI/NTv3_650M_pre
 
 The likelihood step scores only the distinct reference sequences, not all
 10,856 quartet members, because the element-level correlation is what it is

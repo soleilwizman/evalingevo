@@ -1,4 +1,4 @@
-# CPU analysis: evo_epistasis.py evaluate, *_probe.py probe, layer_curve.py
+# CPU analysis: scripts/evo_epistasis.py evaluate, scripts/*_probe.py probe, scripts/layer_curve.py
 numpy
 pandas
 scipy

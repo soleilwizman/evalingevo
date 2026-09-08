@@ -11,7 +11,7 @@ the numbers cannot drift apart:
                            being made: readout minus the strongest baseline,
                            with its group-bootstrap interval and a zero line
 
-    python3 make_figures.py --out results/figures
+    python3 scripts/make_figures.py --out results/figures
 
 Element-level numbers come from the probe.txt files, which share one protocol
 (grouped five-fold, folds unshuffled, RidgeCV inside each training fold).

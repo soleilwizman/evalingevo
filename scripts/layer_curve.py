@@ -12,8 +12,8 @@ Two questions, both answered on CPU from matrices already on disk.
      A probe that only beats k-mers by having more features will score near zero
      here. A probe carrying non-compositional information will not.
 
-    python3 layer_curve.py results/ntv3_650m_sweep
-    python3 layer_curve.py results/evo_probe          # single-layer dirs work too
+    python3 scripts/layer_curve.py results/ntv3_650m_sweep
+    python3 scripts/layer_curve.py results/evo_probe          # single-layer dirs work too
 """
 
 import sys

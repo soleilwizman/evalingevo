@@ -7,7 +7,7 @@ grouped folds without shuffling, so it sits in its own panel and is reported the
 CLAUDE.md requires: the margin over 1/2/3-mer counts with its paired interval, not the
 absolute level.
 
-Run:  python3 model_comparison.py --out results/model_comparison.png
+Run:  python3 scripts/model_comparison.py --out results/model_comparison.png
 """
 
 import argparse

@@ -8,7 +8,7 @@ reference vector taken from the element embeddings that already exist.
 Every readout is refit on whichever variants have both vectors, so the probe
 and the baselines it is compared against are scored on the same rows.
 
-    python3 variant_probe_fit.py --variants results/ntv3_650m_variants \
+    python3 scripts/variant_probe_fit.py --variants results/ntv3_650m_variants \
         --references results/ntv3_650m_final --label "NTv3 650M probe"
 """
 import argparse, hashlib, json

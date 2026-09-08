@@ -7,7 +7,7 @@ overlapping-region groups, with a 95% interval from resampling whole groups.
 The two model scores are single features, so fitting them out of fold only
 sets their scale and sign; it cannot manufacture a correlation.
 
-    python3 element_spearman.py --out results/figures/element_spearman.png
+    python3 scripts/element_spearman.py --out results/figures/element_spearman.png
 """
 
 import argparse

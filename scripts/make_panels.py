@@ -9,7 +9,7 @@ drawn in.
 Out-of-fold predictions are cached under <out>/cache so the figures can be
 redrawn without refitting the wide probes.
 
-    python3 make_panels.py --out results/figures
+    python3 scripts/make_panels.py --out results/figures
 """
 
 import argparse
