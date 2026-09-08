@@ -1,0 +1,15 @@
+{
+  "backend": "ntv3",
+  "checkpoint": "InstaDeepAI/NTv3_100M_pre",
+  "layer": "5",
+  "revision": "main",
+  "n": 5428,
+  "include_reference": false,
+  "include_double": false,
+  "representation": "core.transformer_blocks.5.final_layer_norm",
+  "quartets_sha256": "e3cb00a2bd01110029600482c5d69647991189e349c35d7c823a3ad0bf546e36",
+  "code_sha256": "664881bba7868db1a8994a282ffb9677999b522d75e84fd2f6d4908efb5f1bea",
+  "python": "3.12.3",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "width": 768
+}
