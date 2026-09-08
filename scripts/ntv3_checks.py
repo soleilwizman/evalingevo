@@ -18,46 +18,66 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from artifact_io import load_matrix
+from element_data import elements, validate_elements
+from evo_probe import kmers, paired_interval
 from scipy.stats import spearmanr
-
-from evo_probe import elements, kmers, out_of_fold, paired_interval
+from validation import mean_prediction, out_of_fold
 
 MULTIPLE = 128
 
 
 def layer(embeddings, layer, pooling="mean", folds=5):
     d = Path(embeddings)
+    meta = json.loads((d / "meta.json").read_text())
     path = d / f"X_{pooling}_L{layer}.npy"
     if not path.exists():
         path = d / f"X_{pooling}.npy"
+        recorded = str(meta.get("layer"))
+        if recorded not in (str(layer), f"core.transformer_blocks.{layer}.final_layer_norm"):
+            raise ValueError(
+                "single-layer matrix does not identify the requested transformer layer"
+            )
         if not path.exists():
             found = sorted(int(f.stem.split("_L")[1]) for f in d.glob(f"X_{pooling}_L*.npy"))
             raise SystemExit(f"no matrix for layer {layer} in {d}. Available: {found}")
-    X = np.load(path)
-    if not np.isfinite(X).all():
-        bad = int((~np.isfinite(X).all(1)).sum())
-        raise SystemExit(f"layer {layer} has {bad} non-finite rows; it cannot be fitted")
-
     el = pd.read_csv(d / "elements.csv")
+    X = load_matrix(path, el, ["sequence_id"])
     full = elements().set_index("sequence_id")
+    validate_elements(el, full)
     seqs = full.seq.loc[el.sequence_id].values
     y, g = el.activity.values, el.group.values
 
     gc = np.array([[(s.count("G") + s.count("C")) / len(s)] for s in seqs])
     km = kmers(seqs)
-    meta = json.loads((d / "meta.json").read_text())
-    print(f"{meta.get('checkpoint', d)}   layer {layer}   pooling {pooling}   "
-          f"n={len(el)}   width {X.shape[1]}\n")
+    print(
+        f"{meta.get('checkpoint', d)}   layer {layer}   pooling {pooling}   "
+        f"n={len(el)}   width {X.shape[1]}\n"
+    )
 
     preds, rows = {}, []
-    for name, feat in [("GC content (1 feature)", gc),
-                       ("1-2-3 k-mer counts (84 features)", km),
-                       (f"NTv3 layer {layer} (probe)", X),
-                       (f"NTv3 layer {layer} + k-mers", np.hstack([X, km]))]:
+    for name, feat in [
+        ("GC content (1 feature)", gc),
+        ("1-2-3 k-mer counts (84 features)", km),
+        (f"NTv3 layer {layer} (probe)", X),
+        (f"NTv3 layer {layer} + k-mers", np.hstack([X, km])),
+    ]:
         preds[name] = out_of_fold(feat, y, g, folds)
-        rows.append((name, spearmanr(preds[name], y).statistic,
-                     float(np.sqrt(np.mean((preds[name] - y) ** 2)))))
-    rows.append(("predict the mean", 0.0, float(np.sqrt(np.mean((y - y.mean()) ** 2)))))
+        rows.append(
+            (
+                name,
+                spearmanr(preds[name], y).statistic,
+                float(np.sqrt(np.mean((preds[name] - y) ** 2))),
+            )
+        )
+    mean = mean_prediction(y, g, folds)
+    rows.append(
+        (
+            "predict the mean",
+            float(spearmanr(mean, y).statistic),
+            float(np.sqrt(np.mean((y - mean) ** 2))),
+        )
+    )
 
     width = max(len(r[0]) for r in rows)
     print(f"{'':{width}}   Spearman     RMSE")
@@ -68,64 +88,36 @@ def layer(embeddings, layer, pooling="mean", folds=5):
     margin = spearmanr(preds[a], y).statistic - spearmanr(preds[b], y).statistic
     low, high = paired_interval(preds[a], preds[b], y, g)
     print(f"\nprobe minus k-mers: {margin:+.4f}  95% interval [{low:+.4f}, {high:+.4f}]")
-    print("Beats k-mer counts." if low > 0 else
-          "Reliably WORSE than k-mer counts." if high < 0 else
-          "Not distinguishable from k-mer counts on this evidence.")
+    print(
+        "Beats k-mer counts."
+        if low > 0
+        else "Reliably WORSE than k-mer counts."
+        if high < 0
+        else "Not distinguishable from k-mer counts on this evidence."
+    )
 
 
-def likelihood(checkpoint="InstaDeepAI/NTv3_650M_pre", revision="main",
-               out="results/ntv3_650m_elements", batch_size=100):
-    import torch
-    from transformers import AutoModelForMaskedLM, AutoTokenizer
+def likelihood(
+    checkpoint="InstaDeepAI/NTv3_650M_pre",
+    revision="main",
+    out="results/ntv3_650m_elements",
+    batch_size=100,
+):
+    from benchmark_data import reverse_complement
+    from ntv3_score import NTv3Scorer
 
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
     el = elements()
-    out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    kw = {"trust_remote_code": True, "revision": revision}
-    tok = AutoTokenizer.from_pretrained(checkpoint, **kw)
-    model = AutoModelForMaskedLM.from_pretrained(checkpoint, **kw).float()
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    model.eval().to(device)
-    mask_id = tok.mask_token_id
-    if mask_id is None:
-        raise SystemExit("tokenizer exposes no mask token")
-
-    probe_seq = "ACGT" * (MULTIPLE // 4)
-    ids0 = tok(probe_seq, add_special_tokens=True)["input_ids"]
-    want = tok.convert_tokens_to_ids(list("ACGT"))
-    offset = next(i for i in range(len(ids0) - len(probe_seq) + 1)
-                  if list(ids0[i:i + 4]) == list(want) and len(ids0) - i >= len(probe_seq))
-
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    scorer = NTv3Scorer(checkpoint, revision, use_bfloat16=False)
+    scorer.POSITION_CHUNK = batch_size
+    device = scorer.device
     seqs = el.seq.tolist()
     length = len(seqs[0])
-    target = -(-length // MULTIPLE) * MULTIPLE
-    left = (target - length) // 2
-    positions = [offset + left + i for i in range(length)]
-
-    def complement(s):
-        return s.translate(str.maketrans("ACGTN", "TGCAN"))[::-1]
-
-    def score(sequence):
-        padded = "N" * left + sequence + "N" * (target - length - left)
-        ids = torch.tensor(tok(padded, add_special_tokens=True)["input_ids"],
-                           dtype=torch.long, device=device)
-        truth = ids[positions].clone()
-        got = "".join(tok.convert_ids_to_tokens(truth.tolist()))
-        if got != sequence:
-            raise SystemExit(f"token alignment wrong: {got[:20]} vs {sequence[:20]}")
-        total = 0.0
-        for start in range(0, len(positions), batch_size):
-            chunk = positions[start:start + batch_size]
-            batch = ids.unsqueeze(0).repeat(len(chunk), 1)
-            index = torch.tensor(chunk, device=device)
-            batch[torch.arange(len(chunk), device=device), index] = mask_id
-            with torch.inference_mode():
-                logits = model(input_ids=batch).logits
-            logp = torch.log_softmax(logits.float(), -1)
-            picked = logp[torch.arange(len(chunk), device=device), index,
-                          truth[start:start + len(chunk)]]
-            total += float(picked.detach().cpu().double().sum())
-        return total
-
+    score = scorer._pseudo_log_likelihood
+    complement = reverse_complement
     print(f"{checkpoint}: scoring {len(seqs)} reference elements on {device}", flush=True)
     scores = []
     for i, sequence in enumerate(seqs):
@@ -139,15 +131,18 @@ def likelihood(checkpoint="InstaDeepAI/NTv3_650M_pre", revision="main",
     active = el[el.active.astype(str).str.lower().isin(("true", "1"))]
     print(f"\n{checkpoint} likelihood vs element activity")
     print(f"  Spearman            {rho:+.4f}   (n={len(el)})")
-    print(f"  active elements only {spearmanr(active.likelihood, active.activity).statistic:+.4f}"
-          f"   (n={len(active)})")
+    print(
+        f"  active elements only {spearmanr(active.likelihood, active.activity).statistic:+.4f}"
+        f"   (n={len(active)})"
+    )
     print(f"  per base            {np.mean(scores) / length:+.4f}")
     print(f"\nwrote {out}/element_likelihood.csv")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     a = sub.add_parser("layer", help="CPU. Probe one named layer.")

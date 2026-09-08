@@ -1,124 +1,109 @@
-# Runbook: variant-level embeddings on a GPU
+# Variant embedding runbook
 
-The committed embeddings cover the 2,595 reference 200-mers and, for the two NTv3
-checkpoints, the 5,428 variant sequences as well (`results/ntv3_100m_variants`,
-`results/ntv3_650m_variants`, matrices included). Evo 2 has no variant matrices:
-`results/vp_evo2` holds derived tables only, so the Evo 2 run below is the one that
-is still open. Everything downstream is CPU and already written.
+Run commands from the repository root. New runs belong under `results/v2/`; leave
+historical artifacts untouched. See [PROTOCOL.md](PROTOCOL.md) before mixing
+embeddings or comparing old and new scores.
 
-One run per model, 5,428 sequences each: the variant sequences only. The references
-already exist and get reused, and `variant_probe.py` refuses to subtract two
-directories unless their `meta.json` name the same checkpoint, layer and
-revision.
+## Preparation
 
-| model | variant embeddings | reference embeddings (committed) |
-|---|---|---|
-| Evo 2 7B, `blocks.26.mlp.l3` | `results/evo_variants` (not yet run) | `results/evo_probe` |
-| NTv3 100M, block 5 | `results/ntv3_100m_variants` (committed) | `results/ntv3_100m_final` |
-| NTv3 650M, block 11 | `results/ntv3_650m_variants` (committed) | `results/ntv3_650m_final` |
-
-## 0. Before you start
+Use a compatible CUDA environment for Evo 2 and the dependencies documented by
+the checkpoint authors. Install CPU dependencies from `requirements.txt` and
+authenticate with Hugging Face for gated checkpoints. Never commit access tokens
+in commands or put credential values in result metadata.
 
 ```bash
-cd evalingevo                       # every path below is relative to the repo root
-nvidia-smi                          # confirm the GPU and free VRAM
-df -h .                             # Evo 2 needs ~15 GB free for weights
+nvidia-smi
+df -h .
+hf auth login
+export MODEL_REVISION="<immutable Hugging Face checkpoint commit>"
 ```
 
-Two independent setups. Do NTv3 first: it is smaller, faster, and will surface
-any data-path problem before you spend time on the 7B model.
+Replace the placeholder. `main` is accepted by some entrypoints but is mutable,
+so it is not sufficient to reproduce independent embedding jobs.
 
-## 1. NTv3 100M and 650M
+## Paired variant workflow
+
+This obtains reference, mean-difference and variant-position features from the
+same model load. NTv3 defaults to the final deconvolution stage (`--layer -1`),
+not the two-position transformer bottleneck.
 
 ```bash
-pip install torch transformers
-huggingface-cli login               # the InstaDeepAI checkpoints are gated
+# Offline shape map, no download.
+bash scripts/run_ntv3_deconv.sh map 650m
 
-python3 scripts/embed_variants.py --backend ntv3 --out results/ntv3_100m_variants \
-    --checkpoint InstaDeepAI/NTv3_100M_pre --layer 5  --batch-size 16
+# GPU smoke: separate output, 40 observations.
+python3 scripts/variant_probe.py embed --model ntv3 --layer -1 --limit 40 \
+  --checkpoint InstaDeepAI/NTv3_650M_pre --revision "$MODEL_REVISION" \
+  --out results/v2/smoke_ntv3_variants
 
-python3 scripts/embed_variants.py --backend ntv3 --out results/ntv3_650m_variants \
-    --checkpoint InstaDeepAI/NTv3_650M_pre --layer 11 --batch-size 8
+# Full run after the smoke passes.
+python3 scripts/variant_probe.py embed --model ntv3 --layer -1 \
+  --checkpoint InstaDeepAI/NTv3_650M_pre --revision "$MODEL_REVISION" \
+  --out results/v2/vp_ntv3_650m
+
+# Evo requires the evo2 package and supported NVIDIA hardware.
+python3 scripts/variant_probe.py embed --model evo2 \
+  --layer blocks.26.mlp.l3 --out results/v2/vp_evo2
+
+# DNABERT-2: set its own immutable DNABERT_REVISION first.
+python3 scripts/variant_probe.py embed --model dnabert2 \
+  --revision "$DNABERT_REVISION" --out results/v2/vp_dnabert2
+
+# CPU: choose the target explicitly.
+python3 scripts/variant_probe.py probe --embeddings results/v2/vp_ntv3_650m --target signed
+python3 scripts/variant_probe.py probe --embeddings results/v2/vp_ntv3_650m --target magnitude
+python3 scripts/variant_probe.py compare --target signed \
+  --embeddings results/v2/vp_evo2 results/v2/vp_ntv3_650m
 ```
 
-Layer 5 is the final block of the 6-block 100M model, layer 11 the final block
-of the 12-block 650M, matching the committed reference embeddings exactly.
+Compare complete runs on identical observations, not smoke subsets against full
+runs. Outputs are `X_d_mean.npy`, `X_d_pos.npy`, `X_wt_mean.npy`, observation and
+sequence tables, and metadata. This is not the resumable alternate-only workflow.
+Reference-only controls genomic-background predictability; subtraction does not
+guarantee that background is removed. Pooling selection stays in training folds.
 
-## 2. Evo 2
+## Separate reference and alternate jobs
+
+Use this resumable path for a specifically chosen transformer representation.
+Both sides must record the same checkpoint, immutable revision, layer and pooling
+protocol. Historical metadata lacking that evidence is rejected.
 
 ```bash
-# the evo2 package is not on PyPI; it needs CUDA and builds its own kernels
-git clone https://github.com/ArcInstitute/evo2 && cd evo2 && pip install . && cd ..
-
-python3 scripts/embed_variants.py --backend evo2 --out results/evo_variants \
-    --checkpoint evo2_7b_base --layer blocks.26.mlp.l3 --batch-size 4
+python3 scripts/ntv3_probe.py embed --checkpoint InstaDeepAI/NTv3_100M_pre \
+  --layer 5 --revision "$MODEL_REVISION" --batch-size 8 --out results/v2/ntv3_100m_ref
+python3 scripts/embed_variants.py --backend ntv3 --checkpoint InstaDeepAI/NTv3_100M_pre \
+  --layer 5 --revision "$MODEL_REVISION" --batch-size 8 --out results/v2/ntv3_100m_var
+python3 scripts/variant_probe_fit.py --variants results/v2/ntv3_100m_var \
+  --references results/v2/ntv3_100m_ref --label "NTv3 100M transformer probe"
 ```
 
-Weights are ~13 GB and download on first use. If VRAM is tight, drop
-`--batch-size` to 2 or 1; the run is resumable so an OOM costs only the current
-batch.
+For 650M use that checkpoint's revision and block 11 on both sides. These indices
+are zero-based transformer-block indices, not `hidden_states` indices. The fitter
+reports difference, reference-only, delta-k-mer and GC readouts on the same covered
+variants. It prints coverage; a subset is not the full benchmark.
 
-## 3. Probe (CPU, minutes)
+For separate Evo jobs, pass the same local `--weights` file to `evo_probe.py embed`
+and `embed_variants.py --backend evo2`; metadata checks its hash. Otherwise use the
+paired workflow: the Evo API does not resolve a supplied revision label.
 
-```bash
-python3 scripts/variant_probe.py --embeddings results/ntv3_100m_variants \
-    --reference results/ntv3_100m_final --label "NTv3 100M probe"
-python3 scripts/variant_probe.py --embeddings results/ntv3_650m_variants \
-    --reference results/ntv3_650m_final --label "NTv3 650M probe"
-python3 scripts/variant_probe.py --embeddings results/evo_variants \
-    --reference results/evo_probe       --label "Evo 2 probe"
-```
+`embed_variants.py --include-reference` and `--include-double` add WT/AB sequences
+to its cache. They do not create an interaction probe or replace the fitter's
+required `--references` element table. There is no `variant_probe.py --reference`
+or `--include-alternate` option.
 
-The checkpoint, layer and revision of the two directories are compared before
-anything is subtracted, and the run stops with both tuples printed if they
-differ. That is the whole reason the references are not re-embedded: the check
-is free and the GPU time is not.
+## Resume and verification
 
-If you would rather have a self-contained directory, add `--include-reference`
-to the embedding run (5,428 to 8,023 sequences, about 48% more time) and then
-drop `--reference` from the probe.
+Re-run an interrupted `embed_variants.py` command unchanged. It checks configuration,
+input/code hashes and progress before resuming. Changed checkpoint, layer, batch
+size, code or inputs require a new output directory. Progress follows flushed
+matrix writes. Never edit metadata to force an incompatible resume. An incomplete
+paired run should be restarted in a new directory, not used as a complete cache.
 
-Each writes `variant_probe.json` beside the embeddings with four rows and two
-margins:
+Check metadata, finite matrices, row counts and printed unit counts. NTv3 `--layer -1`
+should yield one vector per real base. Coarse stages map real-base coverage, not
+recovered resolution. Stop on load, shape or non-finite errors; do not bypass checks.
 
-| row | what it answers |
-|---|---|
-| difference vector `h(alt) - h(ref)` | the probe itself |
-| **reference only, control** | can `h(ref)` alone predict the effect? |
-| delta k-mers | the baseline every other bar is judged against |
-| difference plus delta k-mers | does the model add to the baseline? |
-
-The two margins are the results. **Difference minus reference-only** says
-whether the subtraction bought anything: each reference carries about two
-variants, so `h(ref)` alone can only learn how mutable that element is, never
-which substitution happened. If the difference vector does not beat it, the
-probe is reading the genomic background rather than the variant, and its
-correlation is not evidence about variant effects. **Difference minus delta
-k-mers** (+0.177 to beat) is whether the model beats letter counting.
-
-`--include-alternate` adds `h(alt)` alone as a third control, at the cost of
-another wide ridge fit.
-
-## What to expect, and the one caveat worth knowing first
-
-The feature is `h(alt) - h(ref)`, pooled, both from the same checkpoint. The
-difference cancels the static genomic background, which matters here: an
-element-level probe predicts reference activity at about +0.5, so a probe fed
-raw embeddings would mostly learn which region it was looking at.
-
-For NTv3 specifically, 7 downsamples put the transformer blocks at a
-**two-position bottleneck** for a 256-token input. A single-base change has to
-survive 128x downsampling to appear there at all, so a null from NTv3 may say
-more about where it was probed than about the model. Evo 2 has no such
-bottleneck and is the cleaner test. If NTv3 comes back flat and you want a
-second look, probe a full-resolution layer instead of the transformer block.
-
-## Sizes
-
-`X_mean.npy` and `X_last.npy` per run, at 5,428 rows: NTv3 100M ~17 MB each,
-650M ~33 MB each, Evo 2 ~89 MB each. The NTv3 matrices are committed and
-`single_variant_spearman.py` reads them. The Evo 2 pair would add ~180 MB to a
-history that already carries 470 MB of matrices; decide before committing it.
-
-Add `--include-double` to any run to also embed the AB sequences, which is what
-a later interaction probe would need. It costs ~35% more time.
+GPU compatibility and biological results require actual checkpoint runs. CPU
+tests and mocked forward passes are necessary but not sufficient. Large matrices
+can exceed ordinary GitHub file limits; do not commit weights or bulk artifacts
+as part of a source-code cleanup.

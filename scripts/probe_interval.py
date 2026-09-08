@@ -20,9 +20,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from artifact_io import load_matrix
+from element_data import elements, validate_elements
+from evo_probe import kmers, paired_interval
 from scipy.stats import spearmanr
-
-from evo_probe import elements, kmers, out_of_fold, paired_interval
+from validation import out_of_fold
 
 # Escalate the seed check when the 95% lower bound lands this close to zero.
 ESCALATE_MARGIN = 0.01
@@ -30,27 +32,28 @@ ESCALATE_SEEDS = 10
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("embeddings")
     parser.add_argument("--pooling", default="mean")
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--n-boot", type=int, default=1000, dest="n_boot")
-    parser.add_argument("--seeds", type=int, default=0,
-                        help="force this many bootstrap seeds. Default 0 escalates "
-                             "automatically: one seed when the bound is clear of zero, "
-                             "ESCALATE_SEEDS when it is within ESCALATE_MARGIN of it")
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        default=0,
+        help="force this many bootstrap seeds. Default 0 escalates "
+        "automatically: one seed when the bound is clear of zero, "
+        "ESCALATE_SEEDS when it is within ESCALATE_MARGIN of it",
+    )
     args = parser.parse_args()
 
     directory = Path(args.embeddings)
-    X = np.load(directory / f"X_{args.pooling}.npy")
     el = pd.read_csv(directory / "elements.csv")
-    if len(X) != len(el):
-        raise SystemExit(f"embeddings ({len(X)}) and elements ({len(el)}) disagree")
+    X = load_matrix(directory / f"X_{args.pooling}.npy", el, ["sequence_id"])
     full = elements().set_index("sequence_id")
-    missing = set(el.sequence_id) - set(full.index)
-    if missing:
-        raise SystemExit(f"{len(missing)} embedded sequences are not in the element table")
+    validate_elements(el, full)
     seqs = full.seq.loc[el.sequence_id].values
     y, groups = el.activity.values, el.group.values
 
@@ -62,26 +65,33 @@ def main():
     print(f"{directory}   n={len(el)}   pooling {args.pooling}   width {X.shape[1]}")
     print(f"  probe        {rho_probe:+.4f}")
     print(f"  word counts  {rho_words:+.4f}")
-    print(f"  margin       {rho_probe - rho_words:+.4f}  95% interval "
-          f"[{low:+.4f}, {high:+.4f}]")
+    print(f"  margin       {rho_probe - rho_words:+.4f}  95% interval [{low:+.4f}, {high:+.4f}]")
 
     # A pass/fail on one bootstrap draw is not an instrument you can trust near zero:
     # the 650M deconv run clears zero on 7 of 10 seeds and fails on 3. So escalate
     # whenever the bound lands close, and report the spread instead of a verdict.
     seeds = args.seeds or (ESCALATE_SEEDS if abs(low) < ESCALATE_MARGIN else 1)
     if seeds > 1:
-        lows = np.array([low] + [paired_interval(probe, words, y, groups, args.n_boot, s)[0]
-                                 for s in range(1, seeds)])
+        lows = np.array(
+            [low]
+            + [paired_interval(probe, words, y, groups, args.n_boot, s)[0] for s in range(1, seeds)]
+        )
         cleared = int((lows > 0).sum())
-        print(f"  lower bound over {seeds} seeds: min {lows.min():+.4f}, "
-              f"max {lows.max():+.4f}, clears zero {cleared}/{seeds}")
+        print(
+            f"  lower bound over {seeds} seeds: min {lows.min():+.4f}, "
+            f"max {lows.max():+.4f}, clears zero {cleared}/{seeds}"
+        )
         if cleared not in (0, seeds):
-            print("  ON THE BOUNDARY: the verdict flips with the bootstrap seed, so this "
-                  "is not a win.\n  Report the margin and this spread, never a pass/fail.")
+            print(
+                "  ON THE BOUNDARY: the verdict flips with the bootstrap seed, so this "
+                "is not a win.\n  Report the margin and this spread, never a pass/fail."
+            )
             raise SystemExit(1)
-    print("  clears zero: the representation beats letter counting."
-          if low > 0 else
-          "  crosses zero: not distinguishable from letter counting on this evidence.")
+    print(
+        "  clears zero: the representation beats letter counting."
+        if low > 0
+        else "  crosses zero: not distinguishable from letter counting on this evidence."
+    )
 
 
 if __name__ == "__main__":

@@ -5,27 +5,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A benchmark of frozen genomic language models (Evo 2 7B, Nucleotide Transformer v3) against
-measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. Twenty-three flat Python
-scripts in `scripts/`, no package, no test suite, no linter config. Run every script from the repo
+measured two-variant regulatory interactions from the Siraj et al. K562 MPRA. CLI entrypoints in
+`scripts/` now use shared modules, a test suite and Ruff config. See `PROTOCOL.md` for current
+module ownership and validation rules. Run every script from the repo
 root: they import each other by bare module name (which works because `python3 scripts/x.py` puts
 `scripts/` first on `sys.path`) and open `data/` and `results/` by relative path. The README is
-the paper draft and its numbers must be kept in sync with `results/*/metrics.json`.
+the analysis guide; the old proposal and committed results are historical, not regenerated under
+the corrected protocol. Write new experiments under `results/v2/`.
 `docs/proposal/` holds the proposal PDF, its `.docx`, and the python-docx script that builds it;
 nothing in the pipeline reads it.
 
 ## Commands
 
+The README's primary analysis now has two stages: `regulatory_benchmark.py scores`
+(single-variant score differences and whole-element scores, raw correlations plus
+separate calibrated RMSE) and `regulatory_benchmark.py probes` (whole-element frozen
+embeddings). `embed_elements.py` uses the fixed registry in `benchmark_models.py`:
+Evo block 26, both NTv3 models' final deconvolution stage, and DNABERT-2's last
+encoder layer. Do not substitute historical bottleneck or penultimate-layer runs.
+The old proposal and numerical discussion are preserved in `HISTORICAL_ANALYSIS.md`.
+
 ```bash
 pip install numpy pandas scipy scikit-learn matplotlib     # everything below except the GPU steps
 
-# Regenerate every Evo 2 number in README Section 4 from the cached scores (CPU, a few minutes).
-# Verified to reproduce the committed metrics.json to within 1e-4 on every value.
+# Re-evaluate cached scores on the current protocol (CPU).
+# This intentionally does not reproduce historical CV-derived metrics.
 python3 scripts/evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
-    --scores results/evo2_7b_base/evo_scores.csv --out results/evo2_7b_base --label "Evo 2 7B base"
+    --scores results/evo2_7b_base/evo_scores.csv --out results/v2/evo2_7b_base --label "Evo 2 7B base"
 
 # Same pipeline, NTv3 scores
 python3 scripts/evo_epistasis.py evaluate --quartets data/quartets.csv.gz \
-    --scores results/ntv3_100m_pre/ntv3_scores.csv --out results/ntv3_100m_pre --label "NTv3 100M pre"
+    --scores results/ntv3_100m_pre/ntv3_scores.csv --out results/v2/ntv3_100m_pre --label "NTv3 100M pre"
 
 # Element-level probes on the committed embeddings (CPU, minutes; write the output to
 # probe.txt beside the .npy files, which is where the committed results live)
@@ -50,9 +60,9 @@ python3 scripts/ntv3_sweep.py --checkpoint InstaDeepAI/NTv3_650M_pre --out resul
 python3 scripts/evo_epistasis.py prepare-siraj --windows <all_windows.tsv> --code-zip <code.zip> --out data
 ```
 
-There are no tests; `python3 -m py_compile scripts/*.py` is the only static check. To smoke-test a probe
-change without a GPU, point `--embeddings` at a scratch directory holding a random `X_mean.npy`,
-a copy of any committed `elements.csv`, and a `meta.json` with a `layer` key.
+Run `PYTHONPATH=scripts python3 -m unittest discover -s tests -v`, `ruff check scripts tests`,
+`ruff format --check scripts tests` and `python3 -m compileall -q scripts tests`.
+Tests include cached-score CPU evaluation and mocked loading/resume tests, not a GPU rerun.
 
 ## Pipeline
 
@@ -68,7 +78,8 @@ predictions.csv + audit  --evo_probe.elements()-->  the element table every prob
 Siraj et al. recode alleles lowest-to-highest activity and take the lowest-activity diplotype as
 the baseline. On the four-haplotype contrast this can only flip the sign per pair, never the
 magnitude, so it reduces to one `+1/-1` per pair. **It is applied once, in `add_flip` inside
-`evo_epistasis.py`, during `evaluate`.** `predictions.csv` therefore carries `epsilon_refalt`
+`epistasis_evaluation.py` (re-exported by `evo_epistasis.py`), during `evaluate`.**
+`predictions.csv` therefore carries `epsilon_refalt`
 (the original ref/alt contrast), `flip`, and `epsilon` (recoded); `model_interaction` is recoded
 with the same flip. Never recompute or reapply it downstream. A script that did
 (`analysis_section4.py`, since deleted) silently undid the recoding and reported a noise ceiling
@@ -105,23 +116,21 @@ loads.
 `score` and `ntv3_score.py` append to the output CSV and treat it as a resumable cache. A sibling
 `<name>.meta.json` records checkpoint, revision, score definition, code hash and package
 versions; if the meta on disk differs from the current configuration the run refuses to continue,
-so any changed configuration needs a new `--output` path. `--revision` is mandatory for model
-backends. The meta's `code_sha256` is part of that comparison, and `scripts/ntv3_score.py` and
-`scripts/embed_variants.py` are byte-identical to the versions the committed metas record (their
-usage docstrings still say `python3 ntv3_score.py` for that reason). Any edit to either file means
-the committed caches refuse to resume; they are complete, so that only matters for a new run. Every sequence is scored forward and reverse-complement and the two are averaged. The
+so changed configurations need a new output path. Pin immutable revisions for new model runs.
+Entrypoint and shared-module hashes are recorded; edits invalidate resumable caches.
+Historical complete caches remain readable, but must not be relabelled as current runs.
+Every sequence is scored forward and reverse-complement and the two are averaged. The
 embedding code does not average orientations.
 
 ## Cross-validation and baselines
 
 All out-of-fold work uses `GroupKFold` on `group_id`, which merges overlapping genomic regions so
-near-identical 200-mers never straddle a fold. `evaluate` shuffles folds with `--seed`; the probe
-scripts do not shuffle. Do not compare a number from one protocol against the other at the third
-decimal.
+near-identical 200-mers never straddle a fold. All current splits are shuffled with an explicit
+seed; ridge tuning uses grouped inner folds and fold-local scaling. See `PROTOCOL.md`.
 
 Every model readout is reported against the same cheap baselines: GC fraction and overlapping
-1/2/3-mer counts (`kmers` in `evo_probe.py`, 84 features), fitted with `RidgeCV` inside each
-training fold. A probe wins only if the group-bootstrap interval on `rho(probe) - rho(k-mers)`
+1/2/3-mer counts (`kmers` in `evo_probe.py`, 84 features), with grouped inner ridge tuning.
+A probe wins only if the group-bootstrap interval on `rho(probe) - rho(k-mers)`
 excludes zero (`paired_interval`). Absolute AUROC levels in the detection analysis move by
 several points with the fold draw, so `detection_report` re-estimates the gain over 20 splits;
 report the gain, not the level.
@@ -131,8 +140,8 @@ report the gain, not the level.
 - Use `_pre` checkpoints. The `_post` models were supervised on functional tracks that may
   include K562.
 - Input length must be divisible by 128 (7 downsamples). 200-nt oligos are padded to 256 with
-  `N`, never the pad token. `token_offset` locates where sequence tokens begin; every script
-  asserts the masked or pooled positions decode back to the input.
+  `N`, never the pad token. Shared tokenization disables special tokens and checks every row
+  against the input. Pooling uses real-base overlap at each resolution.
 - The transformer blocks sit below the 128x downsampling, so a 256-token input is two positions
   there. Hooks capture `core.transformer_blocks.<i>.final_layer_norm`; 100M has 6 blocks, 650M
   has 12. Mean pooling at that depth averages two vectors.
@@ -152,6 +161,10 @@ Committed embeddings: `results/evo_probe` (Evo 2, `blocks.26.mlp.l3`, width 4096
 1536).
 
 ## What is not done
+
+The following numerical discussion is historical, not a validated result of the current
+protocol. Re-run before making new biological or model-ranking claims. In particular,
+post-hoc layer maxima and the old residual-control results are not selection-adjusted.
 
 The interaction probe, which is the point of Aim 2, has no code: extracting matched WT/A/B/AB
 activations and probing the contrast `h(A) + h(B) - h(WT) - h(AB)` against recoded epsilon. The

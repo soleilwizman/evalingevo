@@ -2,812 +2,105 @@
 """Minimal Evo 2 benchmark for four-haplotype regulatory epistasis."""
 
 import argparse
-import hashlib
-import importlib.metadata
-import itertools
 import json
-import platform
-import re
-import zipfile
-from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from scipy.stats import pearsonr, spearmanr
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, RidgeCV
-from sklearn.model_selection import GroupKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-
-STATES = ("wt", "a", "b", "ab")
-SOURCE = "https://zenodo.org/records/15297965"
-CONTRAST = "A+B-WT-AB (expected additive minus observed double)"
-KMER_VOCAB = tuple("".join(chars) for k in (1, 2, 3) for chars in itertools.product("ACGT", repeat=k))
-
-
-def file_hash(path):
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def seq_id(seq):
-    return hashlib.sha256(seq.encode("ascii")).hexdigest()
-
-
-def reverse_complement(seq):
-    return seq.translate(str.maketrans("ACGT", "TGCA"))[::-1]
-
-
-def differences(ref, seq):
-    if len(ref) != len(seq):
-        raise ValueError("Only equal-length substitutions are supported")
-    return [(i, r, a) for i, (r, a) in enumerate(zip(ref, seq)) if r != a]
-
-
-def mutate(ref, changes):
-    out = list(ref)
-    for i, old, new in changes:
-        if ref[i] != old:
-            raise ValueError("Reference allele mismatch")
-        out[i] = new
-    return "".join(out)
-
-
-def load_quartets(path):
-    """Load and strictly validate one K562 row per WT/A/B/AB quartet."""
-    df = pd.read_csv(path)
-    required = {"pair_id", "group_id", "condition", "pos_a", "pos_b", "distance", "epsilon"}
-    required |= {f"{kind}_{state}" for kind in ("seq", "id", "y") for state in STATES}
-    if missing := required - set(df):
-        raise ValueError(f"Missing columns: {sorted(missing)}")
-    if df.empty or df.pair_id.duplicated().any() or df[list(required)].isna().any().any():
-        raise ValueError("Quartets must be nonempty, unique, and complete")
-    if df.condition.nunique() != 1:
-        raise ValueError("Evaluate one experimental condition at a time")
-    for state in STATES:
-        seq = df[f"seq_{state}"].astype(str)
-        if not seq.str.fullmatch("[ACGT]+", na=False).all():
-            raise ValueError("Sequences must be uppercase A/C/G/T")
-        if not all(seq_id(s) == i for s, i in zip(seq, df[f"id_{state}"])):
-            raise ValueError("Sequence hash mismatch")
-        df[f"y_{state}"] = pd.to_numeric(df[f"y_{state}"], errors="raise")
-    numeric = [f"y_{s}" for s in STATES] + ["epsilon", "distance", "pos_a", "pos_b"]
-    if not np.isfinite(df[numeric].to_numpy(float)).all():
-        raise ValueError("Nonfinite measurement or coordinate")
-    if "epsilon_se" in df:
-        df["epsilon_se"] = pd.to_numeric(df["epsilon_se"], errors="raise")
-        if not np.isfinite(df.epsilon_se.to_numpy(float)).all() or (df.epsilon_se < 0).any():
-            raise ValueError("epsilon_se must be finite and nonnegative")
-    expected = df.y_a + df.y_b - df.y_wt - df.y_ab
-    if not np.allclose(df.epsilon, expected, atol=1e-8, rtol=1e-8):
-        raise ValueError(f"epsilon must use {CONTRAST}")
-    for row in df.itertuples():
-        da, db, dab = differences(row.seq_wt, row.seq_a), differences(row.seq_wt, row.seq_b), differences(row.seq_wt, row.seq_ab)
-        if len(da) != 1 or len(db) != 1 or sorted(da + db) != dab:
-            raise ValueError(f"{row.pair_id}: sequences are not a complete two-SNV quartet")
-        if (da[0][0] + 1, db[0][0] + 1, db[0][0] - da[0][0]) != (row.pos_a, row.pos_b, row.distance):
-            raise ValueError(f"{row.pair_id}: mutation coordinates do not match sequences")
-    return df
-
-
-def parse_variant(value):
-    value = value.replace("chr:", "chr")
-    match = re.fullmatch(r"(chr[0-9XY]+):(\d+):([ACGT]):([ACGT])", value)
-    if not match or match.group(3) == match.group(4):
-        raise ValueError("not_biallelic_SNV")
-    chrom, pos, ref, alt = match.groups()
-    return value, chrom, int(pos), ref, alt
-
-
-def read_oligos(code_zip, wanted):
-    found = {}
-    def add(key, value):
-        if key in found and found[key] != value:
-            raise ValueError(f"Conflicting FASTA records for {key}")
-        found[key] = value
-    with zipfile.ZipFile(code_zip) as archive:
-        for name in archive.namelist():
-            if "/dockerfiles/mpra_chr" not in name or not name.endswith(".fasta"):
-                continue
-            key, parts = None, []
-            with archive.open(name) as handle:
-                for raw in handle:
-                    line = raw.decode().strip()
-                    if line.startswith(">"):
-                        if key in wanted:
-                            add(key, "".join(parts))
-                        key, parts = line[1:].split()[0], []
-                    elif key in wanted:
-                        parts.append(line)
-                if key in wanted:
-                    add(key, "".join(parts))
-    return found
-
-
-def reconstruct(row, fasta):
-    v1, chrom1, p1, r1, a1 = parse_variant(row.v1)
-    v2, chrom2, p2, r2, a2 = parse_variant(row.v2)
-    if chrom1 != chrom2 or p1 == p2:
-        raise ValueError("different_chromosome_or_same_site")
-    ref, single1 = fasta.get(v1 + "_allele1_oligo"), fasta.get(v1 + "_allele2_oligo")
-    ref2, alt2 = fasta.get(v2 + "_allele1_oligo"), fasta.get(v2 + "_allele2_oligo")
-    if None in (ref, single1, ref2, alt2):
-        raise ValueError("missing_oligo")
-    if any(len(s) != 200 or not re.fullmatch("[ACGT]+", s) for s in (ref, single1, ref2, alt2)):
-        raise ValueError("not_200nt_unambiguous_DNA")
-    if differences(ref, single1) != [(99, r1, a1)] or differences(ref2, alt2) != [(99, r2, a2)]:
-        raise ValueError("central_allele_or_coordinate_mismatch")
-    index2 = 99 + p2 - p1
-    if not 10 <= index2 < 190 or ref[index2] != r2:
-        raise ValueError("second_variant_outside_window_or_reference_mismatch")
-    start1, start2 = p1 - 99, p2 - 99
-    lo, hi = max(start1, start2), min(start1 + 200, start2 + 200)
-    if ref[lo-start1:hi-start1] != ref2[lo-start2:hi-start2]:
-        raise ValueError("reference_oligo_overlap_mismatch")
-    single2 = mutate(ref, [(index2, r2, a2)])
-    double = mutate(single1, [(index2, r2, a2)])
-    return [ref, single1, single2, double], chrom1, start1, start1 + 199
-
-
-def prepare_siraj(windows_path, code_zip, out, cell="K562", min_dna=20.0, max_se=0.5):
-    """Reconstruct the fixed 200-nt K562 middle-window benchmark and its audit trail."""
-    out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    source = pd.read_csv(windows_path, sep="\t")
-    source_rows = len(source)
-    source = source[(source.cell_type == cell) & (source.window == "middle") & (source.center_variant == "var1")].copy()
-    source[["v1", "v2"]] = source[["v1", "v2"]].replace("chr:", "chr", regex=True)
-    source = source.sort_values(["v1", "v2", "library", "v1v2_construct"])
-    if source.duplicated(["v1", "v2", "library"]).any():
-        raise ValueError("Unexpected duplicate pair within a library")
-    duplicate = source.duplicated(["v1", "v2"])
-    audit = [dict(status="not_selected", reason="lexicographic_library_rule", **r) for r in source[duplicate].to_dict("records")]
-    source = source[~duplicate].copy()
-    wanted = {v + suffix for v in set(source.v1) | set(source.v2) for suffix in ("_allele1_oligo", "_allele2_oligo")}
-    fasta, accepted = read_oligos(code_zip, wanted), []
-    for row in source.itertuples(index=False):
-        pair_id = f"{row.v1};{row.v2};var1;middle;{row.library}"
-        try:
-            seqs, chrom, start, end = reconstruct(row, fasta)
-            names = ("refref", "altref", "refalt", "altalt")
-            y = np.array([0.0, row.altref_log2Skew, row.refalt_log2Skew, row.altalt_log2Skew], float)
-            se = np.array([getattr(row, f"{x}_Log2FC_SE") for x in names], float)
-            dna = np.array([getattr(row, f"mean_Plasmid_{x}") for x in names], float)
-            if not np.isfinite(np.r_[y, se, dna]).all() or (se < 0).any() or (dna < 0).any():
-                raise ValueError("nonfinite_or_invalid_measurement")
-            if (dna < min_dna).any():
-                raise ValueError("mean_DNA_below_threshold")
-            if (se > max_se).any():
-                raise ValueError("activity_SE_above_threshold")
-            epsilon = y[1] + y[2] - y[0] - y[3]
-            if not np.isfinite(row.int_log2Skew) or not np.isclose(epsilon, -row.int_log2Skew, atol=1e-6, rtol=1e-6):
-                raise ValueError("interaction_contrast_mismatch")
-            accepted.append((pair_id, seqs, y, row.int_log2SkewSE, chrom, start, end))
-            audit.append(dict(status="accepted", reason="", **row._asdict()))
-        except ValueError as error:
-            audit.append(dict(status="excluded", reason=str(error), pair_id=pair_id, **row._asdict()))
-    rows, active_chrom, active_end, group = [], None, -1, -1
-    for pair_id, seqs, y, epsilon_se, chrom, start, end in sorted(accepted, key=lambda x: (x[4], x[5], x[6])):
-        if chrom != active_chrom or start > active_end:
-            group += 1; active_chrom, active_end = chrom, end
-        active_end = max(active_end, end)
-        singles = sorted([(differences(seqs[0], seqs[i])[0][0], seqs[i], y[i]) for i in (1, 2)])
-        ordered_seq = [seqs[0], singles[0][1], singles[1][1], seqs[3]]
-        ordered_y = [y[0], singles[0][2], singles[1][2], y[3]]
-        pos_a, pos_b = singles[0][0] + 1, singles[1][0] + 1
-        row = {"pair_id": f"{pair_id}|{cell}|{seq_id(ordered_seq[3])[:16]}", "background_id": pair_id,
-               "condition": cell, "group_id": f"{cell}_region_{group:05d}",
-               "pos_a": pos_a, "pos_b": pos_b, "distance": pos_b - pos_a}
-        for state, seq, value in zip(STATES, ordered_seq, ordered_y):
-            row.update({f"seq_{state}": seq, f"id_{state}": seq_id(seq), f"y_{state}": value})
-        row.update(epsilon=ordered_y[1] + ordered_y[2] - ordered_y[0] - ordered_y[3], epsilon_se=epsilon_se)
-        rows.append(row)
-    quartets = pd.DataFrame(rows)
-    if quartets.empty:
-        raise ValueError("No accepted quartets")
-    qpath, apath = out / "quartets.csv.gz", out / "audit.csv.gz"
-    quartets.to_csv(qpath, index=False); pd.DataFrame(audit).to_csv(apath, index=False)
-    load_quartets(qpath)
-    report = {"source": SOURCE, "source_rows": source_rows, "cell": cell, "window": "middle", "center_variant": "var1",
-              "contrast": CONTRAST, "source_int_log2Skew_relation": "epsilon = -int_log2Skew",
-              "library_rule": "lexicographic_first_before_QC", "candidate_pairs": len(source),
-              "duplicate_libraries_not_selected": int(duplicate.sum()), "accepted_pairs": len(quartets),
-              "excluded_pairs": int(sum(x["status"] == "excluded" for x in audit)),
-              "overlap_groups": int(quartets.group_id.nunique()), "min_mean_DNA": min_dna,
-              "max_activity_SE_log2": max_se, "all_windows_sha256": file_hash(windows_path),
-              "code_zip_sha256": file_hash(code_zip), "original_haplotype_design_independently_verified": False}
-    (out / "provenance.json").write_text(json.dumps(report, indent=2) + "\n")
-    return report
-
-
-class EvoScorer:
-    def __init__(self, checkpoint, weights=None, device="cuda:0"):
-        import torch
-        from evo2 import Evo2
-        if not torch.cuda.is_available():
-            raise RuntimeError("Evo scoring requires a supported NVIDIA GPU")
-        self.torch, self.model, self.device = torch, Evo2(checkpoint, local_path=weights), device
-        self.model.model.eval()
-
-    def forward(self, sequences):
-        torch, tokenizer = self.torch, self.model.tokenizer
-        tokens = [tokenizer.tokenize(s) for s in sequences]
-        if len({len(s) for s in sequences}) != 1 or any(len(t) != len(s) for t, s in zip(tokens, sequences)):
-            raise ValueError("Scoring requires equal lengths and one token per nucleotide")
-        ids = torch.tensor([[tokenizer.eod_id] + t for t in tokens], dtype=torch.long, device=self.device)
-        with torch.inference_mode():
-            output = self.model(ids)[0]
-            logits = output[0] if isinstance(output, (tuple, list)) else output
-            if logits.ndim != 3 or logits.shape[:2] != ids.shape:
-                raise ValueError("Unexpected Evo output shape")
-            logp = torch.log_softmax(logits[:, :-1].float(), -1)
-            scores = logp.gather(-1, ids[:, 1:, None]).squeeze(-1).double().sum(-1).cpu().numpy()
-        if not np.isfinite(scores).all():
-            raise ValueError("Nonfinite Evo score")
-        return scores
-
-
-def score_quartets(quartets_path, output_path, backend="evo", checkpoint="evo2_7b_base",
-                   revision="UNRECORDED", batch_size=1, weights=None):
-    """Score each unique sequence once; the output CSV is also the resumable cache."""
-    if backend not in {"evo", "gc"} or batch_size < 1:
-        raise ValueError("backend must be evo or gc, and batch_size must be positive")
-    if backend == "evo" and revision == "UNRECORDED":
-        raise ValueError("Record the exact checkpoint snapshot with --revision")
-    quartets = load_quartets(quartets_path)
-    sequences = pd.concat([quartets[[f"id_{s}", f"seq_{s}"]].set_axis(["sequence_id", "sequence"], axis=1) for s in STATES])
-    sequences = sequences.drop_duplicates().sort_values("sequence_id")
-    if sequences.sequence_id.duplicated().any():
-        raise ValueError("One sequence hash maps to multiple sequences")
-    output = Path(output_path); output.parent.mkdir(parents=True, exist_ok=True)
-    meta_path = output.with_name(output.stem + ".meta.json")
-    versions = {name: importlib.metadata.version(name) for name in ("numpy", "pandas", "scipy", "scikit-learn", "matplotlib")}
-    score_definition = ("mean(forward,RC) of summed AR log-likelihood; EOD-as-BOS; "
-                        "FP32 log-softmax; FP64 sum" if backend == "evo" else "GC count; additive negative control")
-    meta = {"backend": backend, "checkpoint": checkpoint if backend == "evo" else None,
-            "revision": revision if backend == "evo" else None, "contrast": CONTRAST,
-            "score": score_definition,
-            "quartets_sha256": file_hash(quartets_path), "code_sha256": file_hash(__file__),
-            "weights_sha256": file_hash(weights) if weights else None, "batch_size": batch_size,
-            "python": platform.python_version(), "platform": platform.platform(), "packages": versions}
-    if meta_path.exists() and json.loads(meta_path.read_text()) != meta:
-        raise ValueError("Scoring configuration changed; use a new output path")
-    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
-    cached = pd.read_csv(output) if output.exists() else pd.DataFrame(columns=["sequence_id", "forward", "reverse", "score"])
-    if cached.sequence_id.duplicated().any() or (len(cached) and not np.isfinite(cached[["forward", "reverse", "score"]]).all().all()):
-        raise ValueError("Invalid score cache")
-    pending = sequences[~sequences.sequence_id.isin(cached.sequence_id)]
-    scorer = EvoScorer(checkpoint, weights) if backend == "evo" and len(pending) else None
-    for _, length_group in pending.groupby(pending.sequence.str.len(), sort=True):
-        for start in range(0, len(length_group), batch_size):
-            batch = length_group.iloc[start:start + batch_size]
-            seqs = batch.sequence.tolist()
-            if scorer:
-                forward, reverse = scorer.forward(seqs), scorer.forward([reverse_complement(s) for s in seqs])
-            else:
-                forward = reverse = np.array([s.count("G") + s.count("C") for s in seqs], float)
-            rows = pd.DataFrame({"sequence_id": batch.sequence_id, "forward": forward, "reverse": reverse,
-                                 "score": (np.asarray(forward) + np.asarray(reverse)) / 2})
-            rows.to_csv(output, mode="a", header=not output.exists(), index=False)
-    scores = pd.read_csv(output).drop_duplicates("sequence_id").set_index("sequence_id").loc[sequences.sequence_id].reset_index()
-    scores.to_csv(output, index=False)
-    return {"sequences": len(scores), "newly_scored": len(pending), **meta}
-
-
-def correlations(y, pred):
-    y, pred = np.asarray(y), np.asarray(pred)
-    if len(y) < 3 or np.ptp(y) < 1e-12 or np.ptp(pred) < 1e-12:
-        return {"spearman": None, "pearson": None}
-    return {"spearman": float(spearmanr(y, pred).statistic), "pearson": float(pearsonr(y, pred).statistic)}
-
-
-def metrics(y, pred, threshold=0.25, errors=False):
-    y, pred = np.asarray(y), np.asarray(pred)
-    result = {"n": len(y), **correlations(y, pred)}
-    mask = (np.abs(y) >= threshold) & (y != 0)
-    truth, guess = np.sign(y[mask]), np.sign(pred[mask])
-    result.update({"n_sign": int(mask.sum()), "sign_accuracy": float(np.mean(truth == guess)) if mask.any() else None,
-                   "sign_coverage": float(np.mean(guess != 0)) if mask.any() else None})
-    result["balanced_sign_accuracy"] = float(np.mean([np.mean(guess[truth == c] == c) for c in (-1, 1)])) if set(truth) == {-1, 1} else None
-    if errors:
-        result.update(rmse=float(np.sqrt(np.mean((y - pred) ** 2))), mae=float(np.mean(np.abs(y - pred))))
-    return result
-
-
-def noise_ceiling(y, epsilon_se, significance_z=1.96):
-    """Estimate target reliability and the corresponding observed-r ceiling.
-
-    This is the classical independent-error approximation
-    ``R = 1 - mean(epsilon_se**2) / Var(epsilon)``.  The square-root of R is
-    the expected maximum observed correlation for a perfect predictor.  The
-    estimate is a diagnostic: it assumes the reported standard errors capture
-    independent measurement error and that the across-pair variance is the
-    signal variance plus that error variance.
-    """
-    y, epsilon_se = np.asarray(y, dtype=float), np.asarray(epsilon_se, dtype=float)
-    if y.shape != epsilon_se.shape:
-        raise ValueError("y and epsilon_se must have the same shape")
-    mask = np.isfinite(y) & np.isfinite(epsilon_se) & (epsilon_se >= 0)
-    if mask.sum() < 2:
-        raise ValueError("Need at least two finite observations with nonnegative epsilon_se")
-    y, epsilon_se = y[mask], epsilon_se[mask]
-    epsilon_variance = float(np.var(y, ddof=0))
-    mean_se_squared = float(np.mean(epsilon_se ** 2))
-    if epsilon_variance <= 0:
-        reliability_raw = None
-        reliability = 0.0
-    else:
-        reliability_raw = float(1.0 - mean_se_squared / epsilon_variance)
-        reliability = float(np.clip(reliability_raw, 0.0, 1.0))
-    return {
-        "n": int(mask.sum()),
-        "epsilon_variance_population": epsilon_variance,
-        "mean_epsilon_se_squared": mean_se_squared,
-        "estimated_signal_variance": float(max(epsilon_variance - mean_se_squared, 0.0)),
-        "reliability_raw": reliability_raw,
-        "reliability": reliability,
-        "perfect_predictor_observed_correlation_ceiling": float(np.sqrt(reliability)),
-        "distinguishable_n_abs_epsilon_ge_z_se": int(np.sum(np.abs(y) >= significance_z * epsilon_se)),
-        "distinguishable_fraction_abs_epsilon_ge_z_se": float(np.mean(np.abs(y) >= significance_z * epsilon_se)),
-        "significance_z": float(significance_z),
-        "assumption": "classical independent measurement error; diagnostic estimate",
-    }
-
-
-def sequence_only_features(quartets):
-    """Build sequence/design features without using measured activity values."""
-    features = np.zeros((len(quartets), len(STATES) * len(KMER_VOCAB) + 3), float)
-    for row_index, row in enumerate(quartets.itertuples(index=False)):
-        offset = 0
-        for state in STATES:
-            sequence = getattr(row, f"seq_{state}")
-            for kmer_index, kmer in enumerate(KMER_VOCAB):
-                features[row_index, offset + kmer_index] = sum(
-                    sequence[i:i + len(kmer)] == kmer for i in range(len(sequence) - len(kmer) + 1)
-                )
-            offset += len(KMER_VOCAB)
-        features[row_index, -3:] = (row.pos_a, row.pos_b, row.distance)
-    return features
-
-
-def add_predictions(quartets, scores, folds=5, seed=0):
-    if scores.sequence_id.duplicated().any():
-        raise ValueError("Duplicate sequence scores")
-    df, mapping = quartets.copy(), scores.set_index("sequence_id").score
-    for state in STATES:
-        df[f"s_{state}"] = df[f"id_{state}"].map(mapping)
-    if not np.isfinite(df[[f"s_{s}" for s in STATES]].to_numpy()).all():
-        raise ValueError("Missing or nonfinite sequence score")
-    df["model_interaction"] = df.s_a + df.s_b - df.s_wt - df.s_ab
-    df = add_flip(df)
-    if not 2 <= folds <= df.group_id.nunique():
-        raise ValueError("Invalid grouped-fold count")
-    y = df.epsilon.to_numpy()
-    features = sequence_only_features(df)
-    df["additive_zero"], df["fold"] = 0.0, -1
-    names = ("calibrated_model", "training_mean", "training_median", "sequence_only_kmer_ridge", "majority_sign")
-    for name in names:
-        df[name] = np.nan
-    coefficients = []
-    split = GroupKFold(n_splits=folds, shuffle=True, random_state=seed)
-    for fold, (train, test) in enumerate(split.split(df, groups=df.group_id)):
-        model = LinearRegression().fit(df.model_interaction.to_numpy()[train, None], y[train])
-        ridge = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(features[train], y[train])
-        df.loc[df.index[test], "calibrated_model"] = model.predict(df.model_interaction.to_numpy()[test, None])
-        df.loc[df.index[test], "sequence_only_kmer_ridge"] = ridge.predict(features[test])
-        df.loc[df.index[test], "training_mean"] = y[train].mean()
-        df.loc[df.index[test], "training_median"] = np.median(y[train])
-        df.loc[df.index[test], "majority_sign"] = 1.0 if np.sum(y[train] > 0) >= np.sum(y[train] < 0) else -1.0
-        df.loc[df.index[test], "fold"] = fold
-        coefficients.append({"fold": fold, "intercept": float(model.intercept_), "slope": float(model.coef_[0])})
-    return df, coefficients
-
-
-def cluster_intervals(df, n_boot=1000, seed=0):
-    rng = np.random.default_rng(seed)
-    groups = [np.flatnonzero(df.group_id.to_numpy() == g) for g in df.group_id.unique()]
-    samples = {k: [] for k in ("spearman", "pearson", "rmse_gain_zero", "rmse_gain_mean", "rmse_gain_sequence")}
-    y, raw, calibrated = (df[c].to_numpy() for c in ("epsilon", "model_interaction", "calibrated_model"))
-    for _ in range(n_boot):
-        idx = np.concatenate([groups[i] for i in rng.integers(len(groups), size=len(groups))])
-        for key, value in correlations(y[idx], raw[idx]).items():
-            if value is not None:
-                samples[key].append(value)
-        model_rmse = np.sqrt(np.mean((y[idx] - calibrated[idx]) ** 2))
-        for key, column in (("rmse_gain_zero", "additive_zero"), ("rmse_gain_mean", "training_mean"),
-                            ("rmse_gain_sequence", "sequence_only_kmer_ridge")):
-            samples[key].append(float(np.sqrt(np.mean((y[idx] - df[column].to_numpy()[idx]) ** 2)) - model_rmse))
-    return {k: np.quantile(v, [0.025, 0.975]).tolist() if v else None for k, v in samples.items()}
-
-
-def select_cases(df, n=3, threshold=0.25):
-    eligible = df[df.epsilon.abs() >= threshold].copy()
-    eligible["correct_sign"] = np.sign(eligible.epsilon) == np.sign(eligible.model_interaction)
-    eligible["oof_abs_error"] = (eligible.epsilon - eligible.calibrated_model).abs()
-    success = eligible[eligible.correct_sign].sort_values(["oof_abs_error", "pair_id"]).head(n).assign(case="success")
-    failure = eligible[~eligible.correct_sign].sort_values(["epsilon", "pair_id"], key=lambda x: -x.abs() if x.name == "epsilon" else x).head(n).assign(case="failure")
-    control = df[df.epsilon.abs() < threshold].sort_values("epsilon", key=lambda x: x.abs()).head(n).assign(case="near_additive")
-    return pd.concat([success, failure, control], ignore_index=True)
-
-
-def rank_feature_contrasts(activations, top_k=20):
-    """Rank SAE features; rows must be WT,A,B,AB and use the benchmark sign."""
-    x = np.asarray(activations)
-    if x.ndim != 2 or x.shape[0] != 4 or not np.isfinite(x).all():
-        raise ValueError("Expected finite activations with shape (4, features)")
-    contrast = x[1] + x[2] - x[0] - x[3]
-    order = np.argsort(-np.abs(contrast), kind="stable")[:top_k]
-    return pd.DataFrame({"feature": order, "contrast": contrast[order], "abs_contrast": np.abs(contrast[order])})
-
-
-def make_plot(df, path, label):
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8), constrained_layout=True)
-    axes[0, 0].scatter(df.model_interaction, df.epsilon, s=8, alpha=0.4)
-    axes[0, 0].set(xlabel=f"{label} interaction", ylabel="Measured epistasis", title="Raw association")
-    axes[0, 1].scatter(df.calibrated_model, df.epsilon, s=8, alpha=0.4)
-    lo, hi = min(df.calibrated_model.min(), df.epsilon.min()), max(df.calibrated_model.max(), df.epsilon.max())
-    axes[0, 1].plot([lo, hi], [lo, hi], color="grey"); axes[0, 1].set(xlabel="OOF prediction", ylabel="Measured epistasis", title="Calibrated")
-    axes[0, 2].hist(df.epsilon, bins=40); axes[0, 2].set(title="Measured epistasis", xlabel="log2 activity")
-    axes[1, 0].hist(df.model_interaction, bins=40); axes[1, 0].set(title="Model interaction", xlabel="score units")
-    bins = (("distance", pd.cut(df.distance, [0, 10, 25, 50, 100, np.inf])),
-            ("|epistasis|", pd.cut(df.epsilon.abs(), [0, 0.25, 0.5, 1, np.inf], include_lowest=True)))
-    strata = []
-    for ax, (name, groups) in zip(axes[1, 1:], bins):
-        values = df.assign(bin=groups).groupby("bin", observed=True).apply(
-            lambda x: pd.Series({"n": len(x), "mae": np.mean(np.abs(x.epsilon - x.calibrated_model)),
-                                 **correlations(x.epsilon, x.model_interaction)}), include_groups=False)
-        ax.bar(values.index.astype(str), values.mae); ax.tick_params(axis="x", rotation=25)
-        ax.set(title=f"Error by {name}", ylabel="OOF MAE")
-        strata.extend({"stratification": name, "bin": str(i), "n": int(r.n), "mae": float(r.mae),
-                       "spearman": None if pd.isna(r.spearman) else float(r.spearman),
-                       "pearson": None if pd.isna(r.pearson) else float(r.pearson)} for i, r in values.iterrows())
-    fig.suptitle(f"{label}: {CONTRAST}"); fig.savefig(path, dpi=180); plt.close(fig)
-    return strata
-
-
-# --------------------------------------------------------------- recoding
-
-def add_flip(df):
-    """Apply the paper's allele recoding to the measured and model contrasts.
-
-    Siraj et al. recode alleles lowest-to-highest activity and treat the
-    lowest-activity diplotype as the reference category.  The four diplotypes
-    pair into complements (wt<->ab, a<->b), so this can only flip the sign of
-    the second difference; magnitude is untouched.  The identical per-pair flip
-    is applied to the model contrast, since flipping the measurement alone
-    would impose a random per-pair sign and destroy the comparison.
-    ``epsilon_refalt`` keeps the original ref/alt contrast, which is what the
-    noise ceiling is estimated on.
-    """
-    y = df[[f"y_{s}" for s in STATES]].to_numpy(float)
-    flip = np.where(np.isin(np.argmin(y, axis=1), (0, 3)), 1.0, -1.0)
-    df = df.copy()
-    df["flip"] = flip
-    df["epsilon_refalt"] = df["epsilon"]
-    df["epsilon"] = flip * df["epsilon"]
-    df["model_interaction"] = flip * df["model_interaction"]
-    return df
-
-
-# -------------------------------------------------- analyses needing the audit
-
-def group_boot(groups, statistic, n_boot=1000, seed=0):
-    """Percentile interval resampling whole overlap groups."""
-    rng = np.random.default_rng(seed)
-    unique = np.asarray(pd.unique(groups))
-    index = {g: np.flatnonzero(groups == g) for g in unique}
-    values = []
-    for _ in range(n_boot):
-        picked = rng.choice(unique, size=len(unique), replace=True)
-        value = statistic(np.concatenate([index[g] for g in picked]))
-        if np.isfinite(value):
-            values.append(value)
-    return [float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))]
-
-
-def auroc(score, label):
-    score, label = np.asarray(score, float), np.asarray(label, bool)
-    ranks = pd.Series(score).rank().to_numpy()
-    positives, negatives = label.sum(), (~label).sum()
-    if positives == 0 or negatives == 0:
-        return float("nan")
-    return float((ranks[label].sum() - positives * (positives + 1) / 2) / (positives * negatives))
-
-
-def gc_fraction(sequences):
-    return np.array([(s.count("G") + s.count("C")) / len(s) for s in sequences])
-
-
-def element_kmers(sequences):
-    lookup = {k: i for i, k in enumerate(KMER_VOCAB)}
-    features = np.zeros((len(sequences), len(KMER_VOCAB)))
-    for row, sequence in enumerate(sequences):
-        for size in (1, 2, 3):
-            for start in range(len(sequence) - size + 1):
-                column = lookup.get(sequence[start:start + size])
-                if column is not None:
-                    features[row, column] += 1
-    return features
-
-
-def out_of_fold_linear(features, y, groups, folds=5, ridge=False, seed=0):
-    features = features.reshape(-1, 1) if features.ndim == 1 else features
-    prediction = np.empty(len(y))
-    for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=seed).split(features, y, groups):
-        model = make_pipeline(StandardScaler(),
-                              RidgeCV(alphas=np.logspace(-2, 5, 30)) if ridge else LinearRegression())
-        prediction[test] = model.fit(features[train], y[train]).predict(features[test])
-    return prediction
-
-
-def join_audit(df, audit_path):
-    audit = pd.read_csv(audit_path)
-    key = ["v1", "v2", "center_variant", "window", "library"]
-    if any(c not in audit.columns for c in key):
-        raise ValueError(f"audit is missing join columns: {[c for c in key if c not in audit.columns]}")
-    joined = audit[key[0]].astype(str)
-    for column in key[1:]:
-        joined = joined + ";" + audit[column].astype(str)
-    audit = audit.assign(_k=joined)
-    wanted = [c for c in ("_k", "refref_Log2FC", "refref_active", "int_emVar") if c in audit.columns]
-    merged = df.assign(_k=df.pair_id.str.split("|").str[0]).merge(
-        audit.drop_duplicates("_k")[wanted], on="_k", how="left")
-    if len(merged) != len(df):
-        raise ValueError("audit join changed the row count")
-    return merged
-
-
-def reproduction_check(df):
-    labelled = df[df.int_emVar == True]  # noqa: E712
-    return {"n_pairs": int(len(df)), "n_labelled": int(len(labelled)),
-            "flip_negative": int((df.flip < 0).sum()),
-            "dampening_labelled_refalt": float((labelled.epsilon_refalt > 0).mean()),
-            "dampening_labelled_recoded": float((labelled.epsilon > 0).mean()),
-            "dampening_all_recoded": float((df.epsilon > 0).mean()),
-            "paper_dampening_fraction": 139 / 180}
-
-
-def single_variant_report(df, n_boot=1000, seed=0):
-    measured = np.concatenate([df.y_a.to_numpy(float), df.y_b.to_numpy(float)])
-    model = np.concatenate([(df.s_a - df.s_wt).to_numpy(float), (df.s_b - df.s_wt).to_numpy(float)])
-    groups = np.concatenate([df.group_id.to_numpy(), df.group_id.to_numpy()])
-    interval = group_boot(groups, lambda i: spearmanr(np.abs(model[i]), np.abs(measured[i])).statistic,
-                          n_boot, seed)
-    return {"n": int(len(measured)),
-            "magnitude_spearman": float(spearmanr(np.abs(model), np.abs(measured)).statistic),
-            "magnitude_95ci": interval,
-            "signed_spearman": float(spearmanr(model, measured).statistic),
-            "sd_model_single_effect": float(np.std(model, ddof=1)),
-            "sd_whole_sequence_score": float(df.s_wt.std()),
-            "scrambled_join_would_give": float(df.s_wt.std() * np.sqrt(2))}
-
-
-def make_element_plot(elements, y, gc, model, predictions, groups, path, n_boot=1000, seed=0,
-                     label="Evo 2"):
-    """Element-level baselines: GC and k-mer counts against the model likelihood."""
-    figure, axes = plt.subplots(1, 4, figsize=(17, 4.2))
-    panels = ((gc, "GC fraction of the 200-mer", "GC content"),
-              (predictions["kmer_1_2_3"], "out-of-fold prediction", "1/2/3-mer counts"),
-              (model, f"{label} log-likelihood", f"{label}\nlikelihood"))
-    for axis, (x, xlabel, title) in zip(axes, panels):
-        axis.scatter(x, y, s=6, alpha=0.25, linewidths=0, color="#3b6ea5")
-        axis.set_xlabel(xlabel)
-        axis.set_title(f"{title}\nSpearman {spearmanr(x, y).statistic:+.3f}")
-    axes[0].set_ylabel("measured reference activity (log2 RNA/DNA)")
-
-    order = ["kmer_1_2_3", "gc", "model"]
-    labels = ["1/2/3-mer\ncounts", "GC\ncontent", f"{label}\nlikelihood"]
-    values, lows, highs = [], [], []
-    for name in order:
-        prediction = predictions[name]
-        rho = float(spearmanr(prediction, y).statistic)
-        low, high = group_boot(groups, lambda i: spearmanr(prediction[i], y[i]).statistic, n_boot, seed)
-        values.append(rho); lows.append(rho - low); highs.append(high - rho)
-    axes[3].bar(labels, values, color=["#2a7f62", "#3b6ea5", "#b4483c"], width=0.6)
-    axes[3].errorbar(labels, values, yerr=[lows, highs], fmt="none", ecolor="black", capsize=4, lw=1)
-    axes[3].axhline(0, color="black", lw=0.8)
-    for i, value in enumerate(values):
-        axes[3].text(i, value + highs[i] + 0.015, f"{value:+.3f}", ha="center", fontsize=9)
-    axes[3].set_ylabel("out-of-fold Spearman")
-    axes[3].set_title("grouped 5-fold, same protocol\nfor every row")
-    axes[3].set_ylim(min(0, min(values)) - 0.05, max(values) + 0.09)
-    for axis in axes:
-        axis.spines[["top", "right"]].set_visible(False)
-    figure.suptitle(f"{label}: predicting enhancer activity from the same 200 bases "
-                    f"(n = {len(y)} elements)", y=1.02)
-    figure.tight_layout()
-    figure.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(figure)
-    return str(path)
-
-
-def element_report(df, folds=5, n_boot=1000, seed=0, plot_path=None, label="Evo 2"):
-    elements = (df.dropna(subset=["refref_Log2FC"]).drop_duplicates("seq_wt")
-                  [["seq_wt", "s_wt", "refref_Log2FC", "refref_active", "group_id"]].reset_index(drop=True))
-    if elements.groupby("seq_wt").group_id.nunique().gt(1).any():
-        raise ValueError("a reference sequence spans more than one cross-validation group")
-    y = elements.refref_Log2FC.to_numpy(float)
-    groups, model = elements.group_id.to_numpy(), elements.s_wt.to_numpy(float)
-    gc, kmers = gc_fraction(elements.seq_wt), element_kmers(elements.seq_wt)
-    active = elements.refref_active.astype(str).str.lower().isin(("true", "1")).to_numpy()
-    mean_prediction = np.empty(len(y))
-    for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=seed).split(y.reshape(-1, 1), y, groups):
-        mean_prediction[test] = y[train].mean()
-
-    def scored(prediction):
-        return {"spearman": float(spearmanr(prediction, y).statistic),
-                "rmse": float(np.sqrt(np.mean((y - prediction) ** 2)))}
-
-    fitted = {"gc": out_of_fold_linear(gc, y, groups, folds, seed=seed),
-              "model": out_of_fold_linear(model, y, groups, folds, seed=seed),
-              "kmer_1_2_3": out_of_fold_linear(kmers, y, groups, folds, ridge=True, seed=seed),
-              "training_mean": mean_prediction}
-    plot = make_element_plot(elements, y, gc, model, fitted, groups, plot_path, n_boot, seed,
-                             label) if plot_path else None
-
-    return {"n_elements": int(len(elements)), "n_active": int(active.sum()), "plot": plot,
-            "raw_spearman": {
-                "gc_vs_activity": float(spearmanr(gc, y).statistic),
-                "gc_95ci": group_boot(groups, lambda i: spearmanr(gc[i], y[i]).statistic, n_boot, seed),
-                "model_vs_activity": float(spearmanr(model, y).statistic),
-                "model_95ci": group_boot(groups, lambda i: spearmanr(model[i], y[i]).statistic, n_boot, seed),
-                "model_vs_activity_active_only": float(spearmanr(model[active], y[active]).statistic),
-                "model_vs_gc": float(spearmanr(model, gc).statistic)},
-            "out_of_fold": {name: scored(value) for name, value in fitted.items()}}
-
-
-def detection_report(df, folds=5, n_boot=1000, seed=0, n_seeds=20):
-    label = (df.int_emVar == True).to_numpy()  # noqa: E712
-    groups = df.group_id.to_numpy()
-    gc = gc_fraction(df.seq_wt)
-    single = (df.y_a.abs() + df.y_b.abs()).to_numpy(float)
-    closeness = -df.distance.to_numpy(float)
-    model = np.abs(df.model_interaction.to_numpy(float))
-
-    def out_of_fold_probability(features, split_seed=None):
-        probability = np.empty(len(label))
-        split_seed = seed if split_seed is None else split_seed
-        for train, test in GroupKFold(n_splits=folds, shuffle=True, random_state=split_seed).split(features, label, groups):
-            fitted = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
-            fitted.fit(features[train], label[train])
-            probability[test] = fitted.predict_proba(features[test])[:, 1]
-        return probability
-
-    covariates = np.column_stack([closeness, single, gc])
-    with_evo = np.column_stack([covariates, model])
-    without = out_of_fold_probability(covariates)
-    with_model = out_of_fold_probability(with_evo)
-
-    # The absolute AUROC moves by a few points with the fold draw, so the gain is
-    # re-estimated over several splits and reported with its spread.  The claim is
-    # the gain, not the level.
-    across = []
-    for other in range(n_seeds):
-        a = auroc(out_of_fold_probability(covariates, other), label)
-        b = auroc(out_of_fold_probability(with_evo, other), label)
-        across.append({"seed": other, "covariates_only": a, "covariates_plus_model": b, "gain": b - a})
-    gains = np.array([row["gain"] for row in across])
-    levels = np.array([row["covariates_only"] for row in across])
-
-    return {"n": int(len(df)), "n_positives": int(label.sum()),
-            "across_seeds": {"n_seeds": n_seeds,
-                             "covariates_only_mean": float(levels.mean()),
-                             "covariates_only_range": [float(levels.min()), float(levels.max())],
-                             "gain_mean": float(gains.mean()),
-                             "gain_range": [float(gains.min()), float(gains.max())],
-                             "per_seed": across},
-            "single_feature_auroc": {"single_variant_effect_size": auroc(single, label),
-                                     "model_interaction_abs": auroc(model, label),
-                                     "closeness_negative_bp": auroc(closeness, label),
-                                     "gc_content": auroc(gc, label)},
-            "covariates_only": auroc(without, label),
-            "covariates_plus_model": auroc(with_model, label),
-            "gain": auroc(with_model, label) - auroc(without, label),
-            "gain_95ci": group_boot(groups, lambda i: auroc(with_model[i], label[i]) - auroc(without[i], label[i]),
-                                    n_boot, seed)}
-
-
-def precision_strata(df, keeps=(1.0, 0.75, 0.5, 0.25)):
-    rows = []
-    for keep in keeps:
-        subset = df[df.epsilon_se <= df.epsilon_se.quantile(keep)]
-        ceiling = noise_ceiling(subset.epsilon_refalt, subset.epsilon_se)
-        rho = float(spearmanr(subset.model_interaction, subset.epsilon).statistic)
-        ceiling_value = ceiling["max_observed_correlation"] if "max_observed_correlation" in ceiling \
-            else float(np.sqrt(max(ceiling["reliability"], 0.0)))
-        rows.append({"keep": keep, "n": int(len(subset)),
-                     "reliability": ceiling["reliability"], "ceiling": ceiling_value,
-                     "spearman": rho,
-                     "disattenuated": rho / ceiling_value if ceiling_value > 0 else None})
-    return rows
-
-
-def audit_analyses(df, audit_path, folds=5, n_boot=1000, seed=0, plot_path=None, label="Evo 2"):
-    """Everything that needs the paper's labels and raw element activity."""
-    joined = join_audit(df, audit_path)
-    return {"audit": str(audit_path),
-            "reproduction": reproduction_check(joined),
-            "single_variants": single_variant_report(joined, n_boot, seed),
-            "elements": element_report(joined, folds, n_boot, seed, plot_path, label),
-            "detection": detection_report(joined, folds, n_boot, seed),
-            "precision_strata": precision_strata(joined),
-            "libraries": joined.pair_id.str.split("|").str[0].str.split(";").str[-1].value_counts().to_dict()}
-
-
-def evaluate(quartets_path, scores_path, out, label="Evo 2", folds=5, seed=0, n_boot=1000, threshold=0.25, audit=None):
-    if n_boot < 1 or threshold < 0:
-        raise ValueError("bootstrap must be positive and threshold nonnegative")
-    out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    df, coefficients = add_predictions(load_quartets(quartets_path), pd.read_csv(scores_path), folds, seed)
-    df.to_csv(out / "predictions.csv", index=False)
-    select_cases(df, threshold=threshold).to_csv(out / "cases.csv", index=False)
-    strata = make_plot(df, out / "plots.png", label)
-    y = df.epsilon.to_numpy()
-    prediction_metrics = {x: metrics(y, df[x], threshold, True) for x in
-                          ("calibrated_model", "additive_zero", "training_mean", "training_median", "sequence_only_kmer_ridge")}
-    table = pd.DataFrame([{"method": "raw " + label, **metrics(y, df.model_interaction, threshold)},
-                          *[{"method": name, **values} for name, values in prediction_metrics.items()]])
-    table.to_csv(out / "results_table.csv", index=False)
-    result = {"label": label, "contrast": CONTRAST, "pairs": len(df), "groups": int(df.group_id.nunique()),
-              "raw": metrics(y, df.model_interaction, threshold),
-              "raw_all_nonzero_signs": metrics(y, df.model_interaction, 0),
-              "predictions": prediction_metrics,
-              "majority_sign": metrics(y, df.majority_sign, threshold), "calibration": coefficients,
-              "cluster_bootstrap_95ci": cluster_intervals(df, n_boot, seed), "strata": strata,
-              "settings": {"folds": folds, "seed": seed, "bootstrap": n_boot, "sign_threshold": threshold},
-              "inputs": {"quartets_sha256": file_hash(quartets_path), "scores_sha256": file_hash(scores_path)}}
-    if "epsilon_se" in df:
-        se = pd.to_numeric(df.epsilon_se, errors="coerce")
-        result["noise_ceiling"] = noise_ceiling(df.epsilon_refalt, se)
-        reliability = result["noise_ceiling"]["reliability"]
-        if reliability > 0:
-            scale = np.sqrt(reliability)
-            ci = result["cluster_bootstrap_95ci"]
-            result["noise_ceiling"].update({
-                "spearman_reliability_adjusted_95ci_approx": [float(np.clip(value / scale, -1.0, 1.0)) for value in ci["spearman"]],
-                "spearman_upper_95_reliability_adjusted_approx": float(np.clip(ci["spearman"][1] / scale, -1.0, 1.0)),
-                "pearson_reliability_adjusted_95ci": [float(np.clip(value / scale, -1.0, 1.0)) for value in ci["pearson"]],
-                "pearson_upper_95_reliability_adjusted": float(np.clip(ci["pearson"][1] / scale, -1.0, 1.0)),
-                "correlation_adjustment_note": "Spearman adjustment is approximate; classical attenuation correction is defined for Pearson correlation.",
-            })
-        mask = np.isfinite(se) & (se > 0) & (df.epsilon.abs() > 1.96 * se)
-        result["exploratory_source_SE_subset"] = metrics(df.epsilon[mask], df.model_interaction[mask], threshold)
-    if audit and Path(audit).exists():
-        result["audit_analyses"] = audit_analyses(df, audit, folds, n_boot, seed,
-                                                  out / "elements_gc_kmer.png", label)
-    elif audit:
-        result["audit_analyses"] = f"skipped, {audit} not found"
-    (out / "metrics.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-    return result
+from benchmark_data import CONTRAST as CONTRAST
+from benchmark_data import KMER_VOCAB as KMER_VOCAB
+from benchmark_data import SOURCE as SOURCE
+from benchmark_data import STATES as STATES
+from benchmark_data import differences as differences
+from benchmark_data import file_hash as file_hash
+from benchmark_data import load_quartets as load_quartets
+from benchmark_data import mutate as mutate
+from benchmark_data import parse_variant as parse_variant
+from benchmark_data import prepare_siraj as prepare_siraj
+from benchmark_data import read_oligos as read_oligos
+from benchmark_data import reconstruct as reconstruct
+from benchmark_data import reverse_complement as reverse_complement
+from benchmark_data import seq_id as seq_id
+from benchmark_plots import make_element_plot as make_element_plot
+from benchmark_plots import make_plot as make_plot
+from benchmark_stats import auroc as auroc
+from benchmark_stats import correlations as correlations
+from benchmark_stats import element_kmers as element_kmers
+from benchmark_stats import gc_fraction as gc_fraction
+from benchmark_stats import group_boot as group_boot
+from benchmark_stats import metrics as metrics
+from benchmark_stats import noise_ceiling as noise_ceiling
+from benchmark_stats import rank_feature_contrasts as rank_feature_contrasts
+from epistasis_evaluation import add_flip as add_flip
+from epistasis_evaluation import add_predictions as add_predictions
+from epistasis_evaluation import audit_analyses as audit_analyses
+from epistasis_evaluation import cluster_intervals as cluster_intervals
+from epistasis_evaluation import detection_report as detection_report
+from epistasis_evaluation import element_report as element_report
+from epistasis_evaluation import evaluate as evaluate
+from epistasis_evaluation import join_audit as join_audit
+from epistasis_evaluation import out_of_fold_linear as out_of_fold_linear
+from epistasis_evaluation import precision_strata as precision_strata
+from epistasis_evaluation import reproduction_check as reproduction_check
+from epistasis_evaluation import select_cases as select_cases
+from epistasis_evaluation import sequence_only_features as sequence_only_features
+from epistasis_evaluation import single_variant_report as single_variant_report
+from evo_scoring import EvoScorer as EvoScorer
+from evo_scoring import score_quartets as score_quartets
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("prepare-siraj")
-    p.add_argument("--windows", required=True); p.add_argument("--code-zip", required=True); p.add_argument("--out", required=True)
-    p.add_argument("--cell", default="K562"); p.add_argument("--min-dna", type=float, default=20); p.add_argument("--max-se", type=float, default=0.5)
+    p.add_argument("--windows", required=True)
+    p.add_argument("--code-zip", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--cell", default="K562")
+    p.add_argument("--min-dna", type=float, default=20)
+    p.add_argument("--max-se", type=float, default=0.5)
     p = commands.add_parser("score")
-    p.add_argument("--quartets", required=True); p.add_argument("--output", required=True); p.add_argument("--backend", choices=("evo", "gc"), default="evo")
-    p.add_argument("--checkpoint", default="evo2_7b_base"); p.add_argument("--revision", default="UNRECORDED")
-    p.add_argument("--batch-size", type=int, default=1); p.add_argument("--weights")
+    p.add_argument("--quartets", required=True)
+    p.add_argument("--output", required=True)
+    p.add_argument("--backend", choices=("evo", "gc"), default="evo")
+    p.add_argument("--checkpoint", default="evo2_7b_base")
+    p.add_argument("--revision", default="UNRECORDED")
+    p.add_argument("--batch-size", type=int, default=1)
+    p.add_argument("--weights")
     p = commands.add_parser("evaluate")
-    p.add_argument("--quartets", required=True); p.add_argument("--scores", required=True); p.add_argument("--out", required=True)
-    p.add_argument("--label", default="Evo 2"); p.add_argument("--folds", type=int, default=5); p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--bootstrap", type=int, default=1000); p.add_argument("--sign-threshold", type=float, default=0.25)
+    p.add_argument("--quartets", required=True)
+    p.add_argument("--scores", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--label", default="Evo 2")
+    p.add_argument("--folds", type=int, default=5)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--bootstrap", type=int, default=1000)
+    p.add_argument("--sign-threshold", type=float, default=0.25)
     p.add_argument("--audit", default="data/audit.csv.gz")
     args = parser.parse_args()
     if args.command == "prepare-siraj":
-        result = prepare_siraj(args.windows, args.code_zip, args.out, args.cell, args.min_dna, args.max_se)
+        result = prepare_siraj(
+            args.windows, args.code_zip, args.out, args.cell, args.min_dna, args.max_se
+        )
     elif args.command == "score":
-        result = score_quartets(args.quartets, args.output, args.backend, args.checkpoint, args.revision, args.batch_size, args.weights)
+        result = score_quartets(
+            args.quartets,
+            args.output,
+            args.backend,
+            args.checkpoint,
+            args.revision,
+            args.batch_size,
+            args.weights,
+        )
     else:
-        result = evaluate(args.quartets, args.scores, args.out, args.label, args.folds, args.seed, args.bootstrap, args.sign_threshold, args.audit)
+        result = evaluate(
+            args.quartets,
+            args.scores,
+            args.out,
+            args.label,
+            args.folds,
+            args.seed,
+            args.bootstrap,
+            args.sign_threshold,
+            args.audit,
+        )
     print(json.dumps(result, indent=2, allow_nan=False))
 
 
